@@ -1,7 +1,7 @@
 {
   "name": "github-discovery-mcp",
-  "version": "1.0.0",
-  "description": "MCP server that helps Claude find relevant open-source GitHub repos for research and learning",
+  "version": "2.0.0",
+  "description": "MCP server that helps Claude find, inspect, and compare open-source GitHub repos for research and learning",
   "type": "module",
   "main": "server.js",
   "scripts": {
