@@ -78,6 +78,26 @@ For example, if you cloned into your home directory, the path would look like `/
 
 Restart Claude Desktop. You should see "github-discovery" listed as a connected MCP server (check the 🔌/tools icon in the app), with all 9 tools available.
 
+## Deploy as a shared connector (a URL instead of a local install)
+
+Everything above runs the server as a local process only you can use. To share it with other people — friends, a class, a team — without them installing anything, deploy [server-http.js](server-http.js) instead: it's the same tools over Streamable HTTP, so anyone can add it in Claude as a **custom connector** by pasting a URL (works on claude.ai, Claude Desktop, Cowork, and mobile — see [Anthropic's docs](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)).
+
+**Deploy to Render (free tier works for trying this with a few people):**
+
+1. Push this repo to GitHub (already done if you're reading this from the repo).
+2. On [render.com](https://render.com), create a new **Web Service** and connect this GitHub repo.
+3. Set the **Build Command** to `npm install` and the **Start Command** to `npm run start:http`. Leave the instance type on **Free** to start.
+4. Deploy. Render assigns a URL like `https://your-app-name.onrender.com` — that's your connector URL, and MCP clients will connect to `https://your-app-name.onrender.com/mcp`.
+5. *(Optional, recommended once you know the URL)* In Render's dashboard, add an environment variable `PUBLIC_HOST` set to just the hostname (e.g. `your-app-name.onrender.com`, no `https://`). This locks the server down to that hostname instead of running fully open — Render redeploys automatically when you save it.
+6. Also add `GITHUB_TOKEN` as an environment variable here — with multiple people sharing one deployed instance, you'll burn through the unauthenticated rate limits (see below) much faster than solo local use.
+
+**Add it in Claude:** Settings → Connectors → Add custom connector → paste `https://your-app-name.onrender.com/mcp` → connect. Share that same URL with anyone else who wants to use it; they add it the same way, no cloning or config files needed.
+
+**Worth knowing before you share the link widely:**
+
+- The server has no authentication by design right now — anyone with the URL can call every tool. Fine for a small group you trust; add auth (the SDK supports bearer tokens via `requireBearerAuth`) before making the link public or charging for access.
+- Render's free tier spins the service down after 15 minutes of inactivity; the next request after that takes 30-60 seconds to wake it back up. See [server-http.js](server-http.js) for the health-check route at `/` if you want to point an uptime pinger at it — but for casual use among a few people, letting it sleep naturally is usually the better trade (see the free-tier rate limit math below).
+
 ## Example prompts
 
 Once connected, just talk to Claude naturally:
@@ -103,16 +123,18 @@ GitHub's REST API has **two separate rate-limit buckets**, and this server's too
 The search bucket is generous enough for casual interactive use. The core bucket is not — it resets hourly, not per-minute, and some tools spend more than one request per call (`get_repo_overview` makes up to 4, `compare_repos` makes 2 per repo compared). If you plan to use the inspection or comparison tools more than a few times an hour, set a token:
 
 1. Create one at [github.com/settings/tokens](https://github.com/settings/tokens) (classic token, no scopes needed — this server only reads public data)
-2. Add it as `GITHUB_TOKEN` in the Claude Desktop config's `env` block (shown above), or export it in your shell before running `npm start`/`npm run inspect` locally
+2. Add it as `GITHUB_TOKEN` — in the Claude Desktop config's `env` block (shown above) for local use, in Render's environment variables for a deployed instance, or exported in your shell before running `npm start`/`npm run inspect` locally
 
-If a rate limit is hit, the server returns a clear message (instead of failing silently) telling you when it resets.
+If a rate limit is hit, the server returns a clear message (instead of failing silently) telling you when it resets. This matters more once several people share one deployed instance — everyone's calls draw from the same 60/hour (or 5,000/hour with a token) core-limit bucket, since GitHub rate-limits by IP/token, not per-user.
 
 ## Project files
 
-- [server.js](server.js) — entry point; wires up the MCP server and registers all tool groups
+- [server.js](server.js) — local entry point; serves the tools over stdio (for Claude Desktop / the Inspector)
+- [server-http.js](server-http.js) — deployable entry point; serves the same tools over Streamable HTTP (for a shared connector URL)
+- [lib/createServer.js](lib/createServer.js) — the shared `McpServer` factory both entry points use
 - [tools/discovery.js](tools/discovery.js) — `search_github_repos`, `search_by_topic`, `get_trending_repos`
 - [tools/inspect.js](tools/inspect.js) — `get_repo_overview`, `get_repo_structure`, `get_file_content`, `get_recent_commits`, `list_branches`
 - [tools/compare.js](tools/compare.js) — `compare_repos`
 - [lib/github.js](lib/github.js) — shared GitHub API client, auth header injection, rate-limit/error handling
 - [lib/format.js](lib/format.js) — shared formatting helpers (relative dates, repo-ref parsing, truncation)
-- [package.json](package.json) — dependencies (`@modelcontextprotocol/server`, `zod`)
+- [package.json](package.json) — dependencies (`@modelcontextprotocol/server`, `@modelcontextprotocol/express`, `@modelcontextprotocol/node`, `express`, `zod`)

@@ -6,6 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "start:http": "node server-http.js",
     "inspect": "npx @modelcontextprotocol/inspector node server.js"
   },
   "keywords": [
@@ -16,7 +17,10 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@modelcontextprotocol/express": "^2.0.0",
+    "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
+    "express": "^5.2.1",
     "zod": "^4.2.0"
   },
   "engines": {
