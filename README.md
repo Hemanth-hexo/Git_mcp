@@ -2,6 +2,8 @@
 
 An MCP server that helps Claude find relevant open-source GitHub repositories for research, learning, or a project you're building — and then dig into a specific repo's structure, code, history, and branches once you've found it worth a closer look.
 
+> **Try it now — no setup needed:** a live instance is already running at `https://git-mcp-rvrp.onrender.com/mcp`. In Claude, go to Settings → Connectors → Add custom connector, paste that URL, and connect. It's free tier, so the first request after a few idle minutes can take 30-60 seconds to wake up — that's expected, just retry.
+
 ## What it does
 
 **Discovery** — find repos from a description or topic:
