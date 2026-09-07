@@ -1,0 +1,25 @@
+{
+  "name": "github-discovery-mcp",
+  "version": "1.0.0",
+  "description": "MCP server that helps Claude find relevant open-source GitHub repos for research and learning",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "inspect": "npx @modelcontextprotocol/inspector node server.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "github",
+    "claude"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "zod": "^4.2.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
