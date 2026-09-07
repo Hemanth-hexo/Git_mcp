@@ -20,7 +20,8 @@ One tool, `search_github_repos`:
 ## Install & run
 
 ```bash
-cd /Users/hemanthsarode/GIT_MCP
+git clone https://github.com/Hemanth-hexo/Git_mcp.git
+cd Git_mcp
 npm install
 ```
 
@@ -45,18 +46,20 @@ Edit Claude Desktop's config file:
 - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
-Add an entry under `mcpServers` (create the file/object if it doesn't exist), using the absolute path to `server.js`:
+Add an entry under `mcpServers` (create the file/object if it doesn't exist), using the **absolute path** to `server.js` on your machine — run `pwd` inside the cloned folder to get it, then append `/server.js`:
 
 ```json
 {
   "mcpServers": {
     "github-discovery": {
       "command": "node",
-      "args": ["/Users/hemanthsarode/GIT_MCP/server.js"]
+      "args": ["/absolute/path/to/Git_mcp/server.js"]
     }
   }
 }
 ```
+
+For example, if you cloned into your home directory, the path would look like `/Users/yourname/Git_mcp/server.js` (macOS/Linux) or `C:\\Users\\yourname\\Git_mcp\\server.js` (Windows).
 
 Restart Claude Desktop. You should see "github-discovery" listed as a connected MCP server (check the 🔌/tools icon in the app), with `search_github_repos` available as a tool.
 
@@ -81,7 +84,7 @@ GitHub's search API allows **10 unauthenticated requests per minute**, which is 
   "mcpServers": {
     "github-discovery": {
       "command": "node",
-      "args": ["/Users/hemanthsarode/GIT_MCP/server.js"],
+      "args": ["/absolute/path/to/Git_mcp/server.js"],
       "env": {
         "GITHUB_TOKEN": "ghp_your_token_here"
       }
