@@ -1,15 +1,6 @@
 import * as z from 'zod/v4';
-import { githubFetch, approximateContributorCount, GitHubApiError } from '../lib/github.js';
+import { githubFetch, approximateContributorCount, describeErrorSafely } from '../lib/github.js';
 import { relativeTime, formatCount, parseRepoRef } from '../lib/format.js';
-
-function describeError(err) {
-    if (err instanceof GitHubApiError) {
-        if (err.isRateLimit) return 'GitHub API rate limit hit';
-        if (err.status === 404) return 'not found on GitHub';
-        return err.message;
-    }
-    return err?.message ?? String(err);
-}
 
 function mdEscape(s) {
     return String(s ?? '').replace(/\|/g, '\\|');
@@ -30,7 +21,7 @@ async function fetchOneForCompare(rawRepo) {
         const info = await infoRes.json();
         return { input: rawRepo, info, contributorCount };
     } catch (err) {
-        return { input: rawRepo, error: describeError(err) };
+        return { input: rawRepo, error: describeErrorSafely(err, `fetching ${owner}/${name}`) };
     }
 }
 

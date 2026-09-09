@@ -2,6 +2,7 @@ import { createMcpExpressApp } from '@modelcontextprotocol/express';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import { createServer } from './lib/createServer.js';
+import { createAuthGate } from './lib/auth.js';
 
 // Deployed/shared entry point: exposes the same tools as server.js (stdio)
 // over Streamable HTTP, so the server can be added to Claude as a custom
@@ -16,11 +17,12 @@ const allowedHosts = process.env.PUBLIC_HOST ? [process.env.PUBLIC_HOST] : undef
 const handler = createMcpHandler(createServer);
 const app = createMcpExpressApp({ host: '0.0.0.0', allowedHosts });
 const node = toNodeHandler(handler);
+const authGate = createAuthGate();
 
-app.all('/mcp', (req, res) => void node(req, res, req.body));
+app.all('/mcp', authGate, (req, res) => void node(req, res, req.body));
 
 app.get('/', (_req, res) => {
-    res.type('text/plain').send('GitHub Discovery MCP server is running. Connect an MCP client to POST /mcp.');
+    res.type('text/plain').send('GitHub Discovery MCP server is running. Connect an authenticated MCP client to POST /mcp.');
 });
 
 app.listen(PORT, '0.0.0.0', () => {

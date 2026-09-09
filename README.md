@@ -2,7 +2,7 @@
 
 An MCP server that helps Claude find relevant open-source GitHub repositories for research, learning, or a project you're building — and then dig into a specific repo's structure, code, history, and branches once you've found it worth a closer look.
 
-> **Try it now — no setup needed:** a live instance is already running at `https://git-mcp-rvrp.onrender.com/mcp`. In Claude, go to Settings → Connectors → Add custom connector, paste that URL, and connect. It's free tier, so the first request after a few idle minutes can take 30-60 seconds to wake up — that's expected, just retry.
+> **Note on the live instance below:** the `/mcp` endpoint now requires a bearer token (see [Security](#security)) — this was added after the URL below was first shared. If you're the operator, redeploy with `MCP_BEARER_TOKEN` set before treating this link as safe to hand out; until then, `https://git-mcp-rvrp.onrender.com/mcp` may still be running the older, unauthenticated code. To add it in Claude once a token is configured: Settings → Connectors → Add custom connector, paste the URL, and provide the token wherever Claude's connector setup accepts one for a non-OAuth server. It's free tier, so the first request after a few idle minutes can take 30-60 seconds to wake up — that's expected, just retry.
 
 ## What it does
 
@@ -90,15 +90,18 @@ Everything above runs the server as a local process only you can use. To share i
 2. On [render.com](https://render.com), create a new **Web Service** and connect this GitHub repo.
 3. Set the **Build Command** to `npm install` and the **Start Command** to `npm run start:http`. Leave the instance type on **Free** to start.
 4. Deploy. Render assigns a URL like `https://your-app-name.onrender.com` — that's your connector URL, and MCP clients will connect to `https://your-app-name.onrender.com/mcp`.
-5. *(Optional, recommended once you know the URL)* In Render's dashboard, add an environment variable `PUBLIC_HOST` set to just the hostname (e.g. `your-app-name.onrender.com`, no `https://`). This locks the server down to that hostname instead of running fully open — Render redeploys automatically when you save it.
-6. Also add `GITHUB_TOKEN` as an environment variable here — with multiple people sharing one deployed instance, you'll burn through the unauthenticated rate limits (see below) much faster than solo local use.
+5. **Required:** generate a secret with `openssl rand -hex 32` and add it as an environment variable `MCP_BEARER_TOKEN` in Render's dashboard. Without this, `/mcp` rejects every request (it fails closed, not open — see [Security](#security)), so the service won't be usable until it's set.
+6. *(Optional, recommended once you know the URL)* Add `PUBLIC_HOST` set to just the hostname (e.g. `your-app-name.onrender.com`, no `https://`). This locks the server down to that hostname instead of accepting any `Host` header.
+7. Also add `GITHUB_TOKEN` as an environment variable here — with multiple people sharing one deployed instance, you'll burn through the unauthenticated rate limits (see below) much faster than solo local use.
 
-**Add it in Claude:** Settings → Connectors → Add custom connector → paste `https://your-app-name.onrender.com/mcp` → connect. Share that same URL with anyone else who wants to use it; they add it the same way, no cloning or config files needed.
+**Add it in Claude:** Settings → Connectors → Add custom connector → paste `https://your-app-name.onrender.com/mcp` → provide the `MCP_BEARER_TOKEN` value wherever Claude's connector setup lets you supply a credential for a non-OAuth server → connect. Share the URL *and* the token with anyone else who should have access — treat the token like a password; whoever holds it can call every tool.
+
+*(Caveat: I haven't independently confirmed exactly how Claude's custom-connector UI expects a static bearer token to be entered, since Claude's own connector docs are OAuth-flow-focused — Client ID/Secret rather than a raw token field. If your client only supports OAuth for custom connectors, this static-secret approach protects the endpoint from anonymous internet traffic either way, but may need an actual OAuth layer in front of it to work smoothly from Claude's UI. Worth confirming in Claude's connector settings before assuming it "just works.")*
 
 **Worth knowing before you share the link widely:**
 
-- The server has no authentication by design right now — anyone with the URL can call every tool. Fine for a small group you trust; add auth (the SDK supports bearer tokens via `requireBearerAuth`) before making the link public or charging for access.
 - Render's free tier spins the service down after 15 minutes of inactivity; the next request after that takes 30-60 seconds to wake it back up. See [server-http.js](server-http.js) for the health-check route at `/` if you want to point an uptime pinger at it — but for casual use among a few people, letting it sleep naturally is usually the better trade (see the free-tier rate limit math below).
+- A shared static token works for a small trusted group. It is not per-user access control — anyone with the token has full access, and revoking access for one person means rotating the token for everyone. Real multi-user access (and charging) would need per-user credentials, which is a bigger step than this review covers.
 
 ## Example prompts
 
@@ -129,6 +132,24 @@ The search bucket is generous enough for casual interactive use. The core bucket
 
 If a rate limit is hit, the server returns a clear message (instead of failing silently) telling you when it resets. This matters more once several people share one deployed instance — everyone's calls draw from the same 60/hour (or 5,000/hour with a token) core-limit bucket, since GitHub rate-limits by IP/token, not per-user.
 
+## Security
+
+This server underwent a security review focused on the HTTP deployment path. Current posture:
+
+- **Input validation** — every tool argument is validated against a Zod schema before the handler runs; malformed input is rejected before it reaches any network call.
+- **Authentication (HTTP transport only)** — `/mcp` requires `Authorization: Bearer <MCP_BEARER_TOKEN>`. The check **fails closed**: if `MCP_BEARER_TOKEN` isn't set, every request is rejected rather than the server falling back to open access (see [lib/auth.js](lib/auth.js)). Token comparison is constant-time to avoid leaking the secret through response-timing differences. `server.js` (stdio, for local/Claude Desktop use) is unaffected — a locally-spawned process is inherently scoped to whoever can run commands on that machine.
+- **Untrusted content boundary** — README previews and file contents fetched from GitHub repos are wrapped in explicit `[UNTRUSTED CONTENT]` delimiters with an instruction not to treat them as commands, and the two tool descriptions that return this content say the same. This is a mitigation for indirect prompt injection (a malicious repo's README or source could otherwise contain text phrased as instructions to the model reading it) — framing, not content filtering; the underlying text is never altered or stripped.
+- **SSRF-safe file downloads** — `get_file_content` follows GitHub's `download_url` for large files only if it resolves to `https://raw.githubusercontent.com`; any other host or scheme is refused rather than fetched (see `isAllowedDownloadUrl` in [lib/github.js](lib/github.js)).
+- **No write access** — every GitHub API call this server makes is a read (`GET`). There is no code path that can create, modify, or delete anything on GitHub.
+- **Error handling** — GitHub API errors return their normal (already-safe) user-facing text. Any *unexpected* exception is logged in full server-side and reduced to a generic message for the client — internal details (stack traces, file paths, dependency internals) are never returned in a tool result. Tokens are only ever placed in the `Authorization` request header, never logged, echoed in output, or embedded in a URL.
+
+**Remaining risks / not covered by this review:**
+
+- The bearer token is a single shared secret, not per-user auth — see the caveat above about how well this integrates with Claude's connector UI, which appears OAuth-oriented.
+- No rate limiting or abuse protection beyond GitHub's own API limits — a valid token holder could still exhaust the shared `GITHUB_TOKEN`'s quota.
+- No structured audit logging of who called what — see the note on observability in earlier project discussion; this review didn't add it.
+- `PUBLIC_HOST` (Host-header validation) and `MCP_BEARER_TOKEN` are independent controls set separately in Render; deploying code changes alone does not retroactively secure an already-running instance until these env vars are actually set there.
+
 ## Project files
 
 - [server.js](server.js) — local entry point; serves the tools over stdio (for Claude Desktop / the Inspector)
@@ -137,6 +158,8 @@ If a rate limit is hit, the server returns a clear message (instead of failing s
 - [tools/discovery.js](tools/discovery.js) — `search_github_repos`, `search_by_topic`, `get_trending_repos`
 - [tools/inspect.js](tools/inspect.js) — `get_repo_overview`, `get_repo_structure`, `get_file_content`, `get_recent_commits`, `list_branches`
 - [tools/compare.js](tools/compare.js) — `compare_repos`
-- [lib/github.js](lib/github.js) — shared GitHub API client, auth header injection, rate-limit/error handling
-- [lib/format.js](lib/format.js) — shared formatting helpers (relative dates, repo-ref parsing, truncation)
+- [lib/github.js](lib/github.js) — shared GitHub API client, auth header injection, rate-limit/error handling, SSRF allowlist
+- [lib/format.js](lib/format.js) — shared formatting helpers (relative dates, repo-ref parsing, truncation, untrusted-content wrapping)
+- [lib/auth.js](lib/auth.js) — bearer-token auth gate for the HTTP transport (fail-closed)
+- [test/](test) — unit and integration tests, run with `npm test` (Node's built-in test runner, no extra dependencies)
 - [package.json](package.json) — dependencies (`@modelcontextprotocol/server`, `@modelcontextprotocol/express`, `@modelcontextprotocol/node`, `express`, `zod`)

@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node server.js",
     "start:http": "node server-http.js",
-    "inspect": "npx @modelcontextprotocol/inspector node server.js"
+    "inspect": "npx @modelcontextprotocol/inspector node server.js",
+    "test": "node --test"
   },
   "keywords": [
     "mcp",
