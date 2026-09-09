@@ -31,7 +31,9 @@ All the `repo` parameters above accept either `"owner/name"` or a full GitHub UR
 - Node.js 20 or later
 - No GitHub account or API key required for light use — see [Rate limits](#rate-limits) for when you'll want one
 
-## Install & run
+## Run it locally (optional)
+
+Most people should just use the shared link above. Run it on your own machine instead only if you want to skip Render entirely — e.g. for development, or to avoid any shared rate limits.
 
 ```bash
 git clone https://github.com/Hemanth-hexo/Git_mcp.git
@@ -39,46 +41,20 @@ cd Git_mcp
 npm install
 ```
 
-Run it directly (it will sit waiting for a client on stdin/stdout — that's expected):
-
-```bash
-npm start
-```
-
-To try it interactively in a browser without wiring it into Claude Desktop yet, use the MCP Inspector:
-
-```bash
-npm run inspect
-```
-
-This opens a local web UI where you can call any of the tools by hand and see the raw result.
-
-## Add to Claude Desktop
-
-Edit Claude Desktop's config file:
-
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-
-Add an entry under `mcpServers` (create the file/object if it doesn't exist), using the **absolute path** to `server.js` on your machine — run `pwd` inside the cloned folder to get it, then append `/server.js`. Setting `GITHUB_TOKEN` here too is strongly recommended once you use the inspection/comparison tools — see [Rate limits](#rate-limits):
+Add to Claude Desktop's config (macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows: `%APPDATA%\Claude\claude_desktop_config.json`), using the absolute path to `server.js`:
 
 ```json
 {
   "mcpServers": {
     "github-discovery": {
       "command": "node",
-      "args": ["/absolute/path/to/Git_mcp/server.js"],
-      "env": {
-        "GITHUB_TOKEN": "ghp_your_token_here"
-      }
+      "args": ["/absolute/path/to/Git_mcp/server.js"]
     }
   }
 }
 ```
 
-For example, if you cloned into your home directory, the path would look like `/Users/yourname/Git_mcp/server.js` (macOS/Linux) or `C:\\Users\\yourname\\Git_mcp\\server.js` (Windows). `GITHUB_TOKEN` is optional — omit the `env` block entirely to run without one.
-
-Restart Claude Desktop. You should see "github-discovery" listed as a connected MCP server (check the 🔌/tools icon in the app), with all 9 tools available.
+Restart Claude Desktop. No token needed here — this runs as a local process, not over the network, so the HTTP auth in [Security](#security) doesn't apply. Optionally add `GITHUB_TOKEN` in an `env` block to raise GitHub's rate limits (see [Rate limits](#rate-limits)). For quick manual testing without Claude Desktop at all, `npm run inspect` opens a local web UI to call tools by hand.
 
 ## Deploy as a shared connector (a URL instead of a local install)
 
