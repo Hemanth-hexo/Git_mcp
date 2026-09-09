@@ -113,9 +113,13 @@ While you're in the Environment tab, also add:
 - `GITHUB_TOKEN` — a [personal access token](https://github.com/settings/tokens) (no scopes needed). With multiple people sharing one deployed instance, you'll burn through the unauthenticated rate limits (see below) much faster than solo local use.
 - *(Optional)* `PUBLIC_HOST` — just the hostname (e.g. `your-app-name.onrender.com`, no `https://`). Locks the server to that hostname instead of accepting any `Host` header.
 
-**Step 3 — connect (or reconnect) in Claude.** Settings → Connectors → Add custom connector → paste `https://your-app-name.onrender.com/mcp` → when it asks for authentication, paste the token from Step 1 → connect. If you already had this connector added from before the token existed, remove it first and re-add it. Share the URL *and* the token with anyone else who should have access.
+**Step 3 — connect (or reconnect) in Claude.** Settings → Connectors → Add custom connector:
+- Name: anything you like, and the URL **must end in `/mcp`** (e.g. `https://your-app-name.onrender.com/mcp`) — the bare domain only serves a health-check page and will fail to connect.
+- Under **Authentication**, Claude defaults to "Always required" (real OAuth) because our `401` response looks OAuth-shaped. Switch it to **"None"** instead — its own description says it's for "servers that use an API key instead of OAuth," which is exactly our setup.
+- Under **Additional request headers**, click **Add header** and set name `Authorization`, value `Bearer <your token from Step 1>` (the space after `Bearer` matters).
+- Click **Add**/**Next** to finish.
 
-*(One honest caveat: I haven't confirmed exactly what that "authentication" step looks like in Claude's UI for this kind of token — Claude's own docs describe custom connectors mainly in terms of OAuth Client ID/Secret, not a plain token field. If you don't see an obvious place to paste it, tell me what's on screen and we'll figure out the right field together.)*
+If you already had this connector added from before the token existed, remove it first and re-add it with the steps above. Share the URL *and* the token with anyone else who should have access.
 
 **Worth knowing before you share the link widely:**
 
@@ -164,7 +168,7 @@ This server underwent a security review focused on the HTTP deployment path. Cur
 
 **Remaining risks / not covered by this review:**
 
-- The bearer token is a single shared secret, not per-user auth — see the caveat above about how well this integrates with Claude's connector UI, which appears OAuth-oriented.
+- The bearer token is a single shared secret, not per-user auth — whoever holds it has full access, and revoking one person means rotating it for everyone. (Confirmed working in Claude's connector UI via Authentication: "None" + an `Authorization: Bearer <token>` request header — see Step 3 above.)
 - No rate limiting or abuse protection beyond GitHub's own API limits — a valid token holder could still exhaust the shared `GITHUB_TOKEN`'s quota.
 - No structured audit logging of who called what — see the note on observability in earlier project discussion; this review didn't add it.
 - `PUBLIC_HOST` (Host-header validation) and `MCP_BEARER_TOKEN` are independent controls set separately in Render; deploying code changes alone does not retroactively secure an already-running instance until these env vars are actually set there.
