@@ -2,7 +2,7 @@
 
 An MCP server that helps Claude find relevant open-source GitHub repositories for research, learning, or a project you're building — and then dig into a specific repo's structure, code, history, and branches once you've found it worth a closer look.
 
-> **Note on the live instance below:** the `/mcp` endpoint now requires a bearer token (see [Security](#security)) — this was added after the URL below was first shared. If you're the operator, redeploy with `MCP_BEARER_TOKEN` set before treating this link as safe to hand out; until then, `https://git-mcp-rvrp.onrender.com/mcp` may still be running the older, unauthenticated code. To add it in Claude once a token is configured: Settings → Connectors → Add custom connector, paste the URL, and provide the token wherever Claude's connector setup accepts one for a non-OAuth server. It's free tier, so the first request after a few idle minutes can take 30-60 seconds to wake up — that's expected, just retry.
+> **Note on the live instance below:** `/mcp` now requires a token to use (see [Security](#security)). If you're the operator and haven't set `MCP_BEARER_TOKEN` in Render yet, follow the 3 steps in [Deploy as a shared connector](#deploy-as-a-shared-connector-a-url-instead-of-a-local-install) below before sharing `https://git-mcp-rvrp.onrender.com/mcp` with anyone — until then it may still be the older, unauthenticated version. It's free tier, so the first request after a few idle minutes can take 30-60 seconds to wake up — that's expected, just retry.
 
 ## What it does
 
@@ -90,13 +90,32 @@ Everything above runs the server as a local process only you can use. To share i
 2. On [render.com](https://render.com), create a new **Web Service** and connect this GitHub repo.
 3. Set the **Build Command** to `npm install` and the **Start Command** to `npm run start:http`. Leave the instance type on **Free** to start.
 4. Deploy. Render assigns a URL like `https://your-app-name.onrender.com` — that's your connector URL, and MCP clients will connect to `https://your-app-name.onrender.com/mcp`.
-5. **Required:** generate a secret with `openssl rand -hex 32` and add it as an environment variable `MCP_BEARER_TOKEN` in Render's dashboard. Without this, `/mcp` rejects every request (it fails closed, not open — see [Security](#security)), so the service won't be usable until it's set.
-6. *(Optional, recommended once you know the URL)* Add `PUBLIC_HOST` set to just the hostname (e.g. `your-app-name.onrender.com`, no `https://`). This locks the server down to that hostname instead of accepting any `Host` header.
-7. Also add `GITHUB_TOKEN` as an environment variable here — with multiple people sharing one deployed instance, you'll burn through the unauthenticated rate limits (see below) much faster than solo local use.
 
-**Add it in Claude:** Settings → Connectors → Add custom connector → paste `https://your-app-name.onrender.com/mcp` → provide the `MCP_BEARER_TOKEN` value wherever Claude's connector setup lets you supply a credential for a non-OAuth server → connect. Share the URL *and* the token with anyone else who should have access — treat the token like a password; whoever holds it can call every tool.
+**Then, before sharing that URL with anyone, set up the access token — 3 steps:**
 
-*(Caveat: I haven't independently confirmed exactly how Claude's custom-connector UI expects a static bearer token to be entered, since Claude's own connector docs are OAuth-flow-focused — Client ID/Secret rather than a raw token field. If your client only supports OAuth for custom connectors, this static-secret approach protects the endpoint from anonymous internet traffic either way, but may need an actual OAuth layer in front of it to work smoothly from Claude's UI. Worth confirming in Claude's connector settings before assuming it "just works.")*
+**Step 1 — generate a secret.** Open Terminal and run:
+
+```bash
+openssl rand -hex 32
+```
+
+This prints a long random string. Copy it — you'll use it twice below. Treat it like a password: whoever has it can use every tool on your server.
+
+**Step 2 — add it to Render.** In your service's dashboard:
+- Click **Environment** in the left sidebar
+- Click **+ Add Environment Variable**
+- Key: `MCP_BEARER_TOKEN` → Value: paste the string from Step 1
+- Click **Save Changes**, then choose **Save and deploy**
+
+Without this step, `/mcp` rejects *every* request — including yours — rather than running open (see [Security](#security)). The service isn't usable until this is set.
+
+While you're in the Environment tab, also add:
+- `GITHUB_TOKEN` — a [personal access token](https://github.com/settings/tokens) (no scopes needed). With multiple people sharing one deployed instance, you'll burn through the unauthenticated rate limits (see below) much faster than solo local use.
+- *(Optional)* `PUBLIC_HOST` — just the hostname (e.g. `your-app-name.onrender.com`, no `https://`). Locks the server to that hostname instead of accepting any `Host` header.
+
+**Step 3 — connect (or reconnect) in Claude.** Settings → Connectors → Add custom connector → paste `https://your-app-name.onrender.com/mcp` → when it asks for authentication, paste the token from Step 1 → connect. If you already had this connector added from before the token existed, remove it first and re-add it. Share the URL *and* the token with anyone else who should have access.
+
+*(One honest caveat: I haven't confirmed exactly what that "authentication" step looks like in Claude's UI for this kind of token — Claude's own docs describe custom connectors mainly in terms of OAuth Client ID/Secret, not a plain token field. If you don't see an obvious place to paste it, tell me what's on screen and we'll figure out the right field together.)*
 
 **Worth knowing before you share the link widely:**
 
