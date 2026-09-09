@@ -1,104 +1,58 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import express from 'express';
-import { createAuthGate, isValidToken } from '../lib/auth.js';
+import { extractCallerToken } from '../lib/auth.js';
 
-const REAL_TOKEN = 'a-real-secret-value-123456789';
-
-function withServer(app) {
-    return new Promise((resolve, reject) => {
-        const server = app.listen(0, '127.0.0.1', () => {
-            const { port } = server.address();
-            resolve({
-                baseUrl: `http://127.0.0.1:${port}`,
-                close: () => new Promise((r) => server.close(r)),
-            });
-        });
-        server.on('error', reject);
-    });
+function mockReq(authorizationHeader) {
+    return { headers: authorizationHeader !== undefined ? { authorization: authorizationHeader } : {} };
 }
 
-describe('isValidToken', () => {
-    test('rejects when no expected token is configured (fail closed)', () => {
-        assert.equal(isValidToken('anything', undefined), false);
-        assert.equal(isValidToken('anything', ''), false);
+function runMiddleware(authorizationHeader) {
+    const req = mockReq(authorizationHeader);
+    let nextCalled = false;
+    extractCallerToken(req, {}, () => {
+        nextCalled = true;
+    });
+    return { req, nextCalled };
+}
+
+describe('extractCallerToken', () => {
+    test('never rejects: next() is always called, with or without a header', () => {
+        assert.equal(runMiddleware(undefined).nextCalled, true);
+        assert.equal(runMiddleware('Bearer abc123').nextCalled, true);
+        assert.equal(runMiddleware('garbage, not a bearer header').nextCalled, true);
     });
 
-    test('rejects when no token is provided', () => {
-        assert.equal(isValidToken(undefined, REAL_TOKEN), false);
-        assert.equal(isValidToken('', REAL_TOKEN), false);
+    test('with no Authorization header, githubToken is undefined (anonymous)', () => {
+        const { req } = runMiddleware(undefined);
+        assert.equal(req.auth.githubToken, undefined);
+        assert.equal(req.auth.clientId, 'anonymous');
     });
 
-    test('rejects a wrong token', () => {
-        assert.equal(isValidToken('wrong-token', REAL_TOKEN), false);
+    test('extracts the token from a well-formed Bearer header', () => {
+        const { req } = runMiddleware('Bearer ghp_abc123def456');
+        assert.equal(req.auth.githubToken, 'ghp_abc123def456');
+        assert.equal(req.auth.clientId, 'byo-github-token');
     });
 
-    test('rejects a different-length token without throwing', () => {
-        assert.doesNotThrow(() => isValidToken('short', REAL_TOKEN));
-        assert.equal(isValidToken('short', REAL_TOKEN), false);
+    test('is case-insensitive on the "Bearer" scheme', () => {
+        const { req } = runMiddleware('bearer some-token-value');
+        assert.equal(req.auth.githubToken, 'some-token-value');
     });
 
-    test('accepts an exact match', () => {
-        assert.equal(isValidToken(REAL_TOKEN, REAL_TOKEN), true);
-    });
-});
-
-describe('createAuthGate', () => {
-    test('fails closed: every request is rejected when MCP_BEARER_TOKEN is unset', async () => {
-        const logs = [];
-        const gate = createAuthGate({ env: {}, log: (msg) => logs.push(msg) });
-        const app = express();
-        app.get('/protected', gate, (req, res) => res.json({ ok: true }));
-        const { baseUrl, close } = await withServer(app);
-        try {
-            const res = await fetch(`${baseUrl}/protected`);
-            assert.equal(res.status, 401);
-            const res2 = await fetch(`${baseUrl}/protected`, { headers: { Authorization: 'Bearer anything-at-all' } });
-            assert.equal(res2.status, 401);
-        } finally {
-            await close();
-        }
-        assert.ok(logs.some((m) => m.includes('MCP_BEARER_TOKEN is not set')), 'should log a clear operator-facing warning');
+    test('trims incidental whitespace around the token', () => {
+        const { req } = runMiddleware('Bearer   token-with-leading-spaces  ');
+        assert.equal(req.auth.githubToken, 'token-with-leading-spaces');
     });
 
-    test('rejects a request with no Authorization header when a token is configured', async () => {
-        const gate = createAuthGate({ env: { MCP_BEARER_TOKEN: REAL_TOKEN }, log: () => {} });
-        const app = express();
-        app.get('/protected', gate, (req, res) => res.json({ ok: true }));
-        const { baseUrl, close } = await withServer(app);
-        try {
-            const res = await fetch(`${baseUrl}/protected`);
-            assert.equal(res.status, 401);
-        } finally {
-            await close();
-        }
+    test('malformed header (not "Bearer <token>") yields no token, but still proceeds', () => {
+        const { req, nextCalled } = runMiddleware('Basic dXNlcjpwYXNz');
+        assert.equal(req.auth.githubToken, undefined);
+        assert.equal(nextCalled, true);
     });
 
-    test('rejects a request with the wrong token', async () => {
-        const gate = createAuthGate({ env: { MCP_BEARER_TOKEN: REAL_TOKEN }, log: () => {} });
-        const app = express();
-        app.get('/protected', gate, (req, res) => res.json({ ok: true }));
-        const { baseUrl, close } = await withServer(app);
-        try {
-            const res = await fetch(`${baseUrl}/protected`, { headers: { Authorization: 'Bearer wrong-value' } });
-            assert.equal(res.status, 401);
-        } finally {
-            await close();
-        }
-    });
-
-    test('allows a request with the correct token', async () => {
-        const gate = createAuthGate({ env: { MCP_BEARER_TOKEN: REAL_TOKEN }, log: () => {} });
-        const app = express();
-        app.get('/protected', gate, (req, res) => res.json({ ok: true }));
-        const { baseUrl, close } = await withServer(app);
-        try {
-            const res = await fetch(`${baseUrl}/protected`, { headers: { Authorization: `Bearer ${REAL_TOKEN}` } });
-            assert.equal(res.status, 200);
-            const body = await res.json();
-            assert.equal(body.ok, true);
-        } finally {
-            await close();
-        }
+    test('always attaches a populated expiresAt (the SDK requires one on AuthInfo-shaped objects)', () => {
+        const { req } = runMiddleware('Bearer abc');
+        assert.equal(typeof req.auth.expiresAt, 'number');
+        assert.ok(req.auth.expiresAt > Date.now() / 1000);
     });
 });

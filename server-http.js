@@ -2,7 +2,7 @@ import { createMcpExpressApp } from '@modelcontextprotocol/express';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import { createServer } from './lib/createServer.js';
-import { createAuthGate } from './lib/auth.js';
+import { extractCallerToken } from './lib/auth.js';
 
 // Deployed/shared entry point: exposes the same tools as server.js (stdio)
 // over Streamable HTTP, so the server can be added to Claude as a custom
@@ -17,12 +17,17 @@ const allowedHosts = process.env.PUBLIC_HOST ? [process.env.PUBLIC_HOST] : undef
 const handler = createMcpHandler(createServer);
 const app = createMcpExpressApp({ host: '0.0.0.0', allowedHosts });
 const node = toNodeHandler(handler);
-const authGate = createAuthGate();
 
-app.all('/mcp', authGate, (req, res) => void node(req, res, req.body));
+// Public by design — extractCallerToken never rejects, it just reads an
+// optional caller-supplied GitHub token off the Authorization header. See
+// lib/auth.js and the "Rate limits" section of the README.
+app.all('/mcp', extractCallerToken, (req, res) => void node(req, res, req.body));
 
 app.get('/', (_req, res) => {
-    res.type('text/plain').send('GitHub Discovery MCP server is running. Connect an authenticated MCP client to POST /mcp.');
+    res.type('text/plain').send(
+        'GitHub Discovery MCP server is running and open to anyone. Connect an MCP client to POST /mcp. ' +
+        'Optionally send your own GitHub token as "Authorization: Bearer <token>" for a higher rate limit.'
+    );
 });
 
 app.listen(PORT, '0.0.0.0', () => {

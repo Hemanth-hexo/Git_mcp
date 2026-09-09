@@ -2,7 +2,7 @@
 
 An MCP server that helps Claude find relevant open-source GitHub repositories for research, learning, or a project you're building — and then dig into a specific repo's structure, code, history, and branches once you've found it worth a closer look.
 
-> **Note on the live instance below:** `/mcp` now requires a token to use (see [Security](#security)). If you're the operator and haven't set `MCP_BEARER_TOKEN` in Render yet, follow the 3 steps in [Deploy as a shared connector](#deploy-as-a-shared-connector-a-url-instead-of-a-local-install) below before sharing `https://git-mcp-rvrp.onrender.com/mcp` with anyone — until then it may still be the older, unauthenticated version. It's free tier, so the first request after a few idle minutes can take 30-60 seconds to wake up — that's expected, just retry.
+> **Try it now — genuinely public, no setup:** `https://git-mcp-rvrp.onrender.com/mcp` is live and open to anyone. In Claude, go to Settings → Connectors → Add custom connector, paste that URL, set Authentication to **None**, and connect — no token, no signup. It's free tier, so the first request after a few idle minutes can take 30-60 seconds to wake up — that's expected, just retry. See [Rate limits](#rate-limits) if you want higher limits than the shared free tier gives you.
 
 ## What it does
 
@@ -58,49 +58,27 @@ Restart Claude Desktop. No token needed here — this runs as a local process, n
 
 ## Deploy as a shared connector (a URL instead of a local install)
 
-Everything above runs the server as a local process only you can use. To share it with other people — friends, a class, a team — without them installing anything, deploy [server-http.js](server-http.js) instead: it's the same tools over Streamable HTTP, so anyone can add it in Claude as a **custom connector** by pasting a URL (works on claude.ai, Claude Desktop, Cowork, and mobile — see [Anthropic's docs](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)).
+Everything above runs the server as a local process only you can use. To make it available to anyone — friends, strangers, whoever — without them installing anything, deploy [server-http.js](server-http.js) instead: it's the same tools over Streamable HTTP, so anyone can add it in Claude as a **custom connector** by pasting a URL (works on claude.ai, Claude Desktop, Cowork, and mobile — see [Anthropic's docs](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)).
 
-**Deploy to Render (free tier works for trying this with a few people):**
+**Deploy to Render (free tier is fine to start):**
 
 1. Push this repo to GitHub (already done if you're reading this from the repo).
 2. On [render.com](https://render.com), create a new **Web Service** and connect this GitHub repo.
 3. Set the **Build Command** to `npm install` and the **Start Command** to `npm run start:http`. Leave the instance type on **Free** to start.
-4. Deploy. Render assigns a URL like `https://your-app-name.onrender.com` — that's your connector URL, and MCP clients will connect to `https://your-app-name.onrender.com/mcp`.
+4. Deploy. Render assigns a URL like `https://your-app-name.onrender.com` — MCP clients connect to `https://your-app-name.onrender.com/mcp` (note the `/mcp`, the bare domain only serves a health-check page).
 
-**Then, before sharing that URL with anyone, set up the access token — 3 steps:**
+That's it — **no token setup required.** The server is public by design: anyone with the URL can use it immediately.
 
-**Step 1 — generate a secret.** Open Terminal and run:
+*(Optional)* In Render's Environment tab, you can still add:
+- `PUBLIC_HOST` — just the hostname (e.g. `your-app-name.onrender.com`, no `https://`). Locks the server to that hostname instead of accepting any `Host` header — protects against DNS-rebinding-style tricks, not a login of any kind.
+- `GITHUB_TOKEN` — a personal access token this server falls back to for anonymous callers who don't bring their own (see [Rate limits](#rate-limits)). Optional; the server works fine without it.
 
-```bash
-openssl rand -hex 32
-```
+**Connect in Claude:** Settings → Connectors → Add custom connector → paste `https://your-app-name.onrender.com/mcp` → set **Authentication** to **None** (this server doesn't use OAuth or any login) → connect. Share the URL with anyone — that's the whole distribution step, nothing else to hand out.
 
-This prints a long random string. Copy it — you'll use it twice below. Treat it like a password: whoever has it can use every tool on your server.
+**Worth knowing:**
 
-**Step 2 — add it to Render.** In your service's dashboard:
-- Click **Environment** in the left sidebar
-- Click **+ Add Environment Variable**
-- Key: `MCP_BEARER_TOKEN` → Value: paste the string from Step 1
-- Click **Save Changes**, then choose **Save and deploy**
-
-Without this step, `/mcp` rejects *every* request — including yours — rather than running open (see [Security](#security)). The service isn't usable until this is set.
-
-While you're in the Environment tab, also add:
-- `GITHUB_TOKEN` — a [personal access token](https://github.com/settings/tokens) (no scopes needed). With multiple people sharing one deployed instance, you'll burn through the unauthenticated rate limits (see below) much faster than solo local use.
-- *(Optional)* `PUBLIC_HOST` — just the hostname (e.g. `your-app-name.onrender.com`, no `https://`). Locks the server to that hostname instead of accepting any `Host` header.
-
-**Step 3 — connect (or reconnect) in Claude.** Settings → Connectors → Add custom connector:
-- Name: anything you like, and the URL **must end in `/mcp`** (e.g. `https://your-app-name.onrender.com/mcp`) — the bare domain only serves a health-check page and will fail to connect.
-- Under **Authentication**, Claude defaults to "Always required" (real OAuth) because our `401` response looks OAuth-shaped. Switch it to **"None"** instead — its own description says it's for "servers that use an API key instead of OAuth," which is exactly our setup.
-- Under **Additional request headers**, click **Add header** and set name `Authorization`, value `Bearer <your token from Step 1>` (the space after `Bearer` matters).
-- Click **Add**/**Next** to finish.
-
-If you already had this connector added from before the token existed, remove it first and re-add it with the steps above. Share the URL *and* the token with anyone else who should have access.
-
-**Worth knowing before you share the link widely:**
-
-- Render's free tier spins the service down after 15 minutes of inactivity; the next request after that takes 30-60 seconds to wake it back up. See [server-http.js](server-http.js) for the health-check route at `/` if you want to point an uptime pinger at it — but for casual use among a few people, letting it sleep naturally is usually the better trade (see the free-tier rate limit math below).
-- A shared static token works for a small trusted group. It is not per-user access control — anyone with the token has full access, and revoking access for one person means rotating the token for everyone. Real multi-user access (and charging) would need per-user credentials, which is a bigger step than this review covers.
+- Render's free tier spins the service down after 15 minutes of inactivity; the next request after that takes 30-60 seconds to wake it back up.
+- Because it's genuinely open, GitHub's own rate limits are the only thing standing between this and abuse — see [Rate limits](#rate-limits) for how that's handled and what its limits are.
 
 ## Example prompts
 
@@ -119,35 +97,46 @@ Once connected, just talk to Claude naturally:
 
 GitHub's REST API has **two separate rate-limit buckets**, and this server's tools split across both:
 
-| Bucket | Used by | Unauthenticated | With `GITHUB_TOKEN` |
+| Bucket | Used by | Anonymous | With a token |
 |---|---|---|---|
 | **search** | `search_github_repos`, `search_by_topic`, `get_trending_repos` | 10 requests/min | 30 requests/min |
 | **core** | `get_repo_overview`, `get_repo_structure`, `get_file_content`, `get_recent_commits`, `list_branches`, `compare_repos` | 60 requests/**hour** | 5,000 requests/hour |
 
-The search bucket is generous enough for casual interactive use. The core bucket is not — it resets hourly, not per-minute, and some tools spend more than one request per call (`get_repo_overview` makes up to 4, `compare_repos` makes 2 per repo compared). If you plan to use the inspection or comparison tools more than a few times an hour, set a token:
+The search bucket is generous enough for casual interactive use. The core bucket is not — it resets hourly, not per-minute, and some tools spend more than one request per call (`get_repo_overview` makes up to 4, `compare_repos` makes 2 per repo compared).
 
-1. Create one at [github.com/settings/tokens](https://github.com/settings/tokens) (classic token, no scopes needed — this server only reads public data)
-2. Add it as `GITHUB_TOKEN` — in the Claude Desktop config's `env` block (shown above) for local use, in Render's environment variables for a deployed instance, or exported in your shell before running `npm start`/`npm run inspect` locally
+**How tokens work on the deployed connector (this is the key design point):** the server is public and takes no login, but it *does* read an optional `Authorization: Bearer <token>` header — and if you put your own [GitHub personal access token](https://github.com/settings/tokens) there (no scopes needed), your requests use *your own* rate limit, not a pool shared with every other stranger using the same link. Order of priority per request:
 
-If a rate limit is hit, the server returns a clear message (instead of failing silently) telling you when it resets. This matters more once several people share one deployed instance — everyone's calls draw from the same 60/hour (or 5,000/hour with a token) core-limit bucket, since GitHub rate-limits by IP/token, not per-user.
+1. **Your own GitHub token**, if you sent one — you get your own 5,000/hour, unaffected by anyone else's usage.
+2. The **operator's `GITHUB_TOKEN`** (if set on the server) — a shared fallback pool for anonymous callers.
+3. Otherwise, **GitHub's fully anonymous limit** — the 60/hour (or 10/min search) figures above, shared across everyone not bringing their own token.
+
+To use your own token when connecting in Claude: Add custom connector → Authentication: **None** → **Additional request headers** → Add header → name `Authorization`, value `Bearer <your GitHub token>`. Entirely optional — the server works with zero setup, this just gets you a bigger, un-shared quota.
+
+**If you do bring your own token, two things worth knowing:**
+- You're trusting *this server's operator* not to log or misuse it — verified in code and by test that it never is (see [Security](#security)), but that's a claim about this specific deployment, not a platform guarantee. Treat any third-party MCP connector's request for your token the same way you'd treat handing a password to a website you didn't build.
+- Use a token scoped to **read-only, public-repo access only** (no `repo` write scope, no admin/org scopes) — this server only ever makes read requests, but a token with broader permissions than that is unnecessary risk if it were ever exposed, regardless of how this server itself behaves. If your token happens to have access to private repos, this server will read those too when asked — same as any GitHub API client using that token would.
+
+Running locally (`server.js`/stdio), the same priority applies except there's no per-request header to bring — set `GITHUB_TOKEN` in the Claude Desktop config's `env` block (or your shell) to raise your own limit.
+
+If a rate limit is hit, the server returns a clear message (instead of failing silently) telling you when it resets and reminding you that bringing your own token is an option.
 
 ## Security
 
-This server underwent a security review focused on the HTTP deployment path. Current posture:
+This server underwent a security review, then a deliberate follow-up change: it moved from a single shared access token to fully public access with optional per-caller GitHub tokens (see [Rate limits](#rate-limits)). Current posture:
 
 - **Input validation** — every tool argument is validated against a Zod schema before the handler runs; malformed input is rejected before it reaches any network call.
-- **Authentication (HTTP transport only)** — `/mcp` requires `Authorization: Bearer <MCP_BEARER_TOKEN>`. The check **fails closed**: if `MCP_BEARER_TOKEN` isn't set, every request is rejected rather than the server falling back to open access (see [lib/auth.js](lib/auth.js)). Token comparison is constant-time to avoid leaking the secret through response-timing differences. `server.js` (stdio, for local/Claude Desktop use) is unaffected — a locally-spawned process is inherently scoped to whoever can run commands on that machine.
+- **Public by design (HTTP transport)** — `/mcp` takes no login and rejects nothing based on identity. It optionally reads an `Authorization: Bearer <token>` header and, when present, uses that value as *that caller's own* GitHub token for GitHub API calls made on their behalf — see [lib/auth.js](lib/auth.js) and `createGitHubClient` in [lib/github.js](lib/github.js). A caller's token is used only for their own request and never stored, logged, or reused for anyone else (verified by test — see `test/githubClient.test.js`'s "no cross-caller leakage" case). `server.js` (stdio, for local/Claude Desktop use) is a separate, locally-spawned process, inherently scoped to whoever can run commands on that machine.
 - **Untrusted content boundary** — README previews and file contents fetched from GitHub repos are wrapped in explicit `[UNTRUSTED CONTENT]` delimiters with an instruction not to treat them as commands, and the two tool descriptions that return this content say the same. This is a mitigation for indirect prompt injection (a malicious repo's README or source could otherwise contain text phrased as instructions to the model reading it) — framing, not content filtering; the underlying text is never altered or stripped.
 - **SSRF-safe file downloads** — `get_file_content` follows GitHub's `download_url` for large files only if it resolves to `https://raw.githubusercontent.com`; any other host or scheme is refused rather than fetched (see `isAllowedDownloadUrl` in [lib/github.js](lib/github.js)).
-- **No write access** — every GitHub API call this server makes is a read (`GET`). There is no code path that can create, modify, or delete anything on GitHub.
-- **Error handling** — GitHub API errors return their normal (already-safe) user-facing text. Any *unexpected* exception is logged in full server-side and reduced to a generic message for the client — internal details (stack traces, file paths, dependency internals) are never returned in a tool result. Tokens are only ever placed in the `Authorization` request header, never logged, echoed in output, or embedded in a URL.
+- **No write access** — every GitHub API call this server makes is a read (`GET`). There is no code path that can create, modify, or delete anything on GitHub — including with a caller-supplied token, which is only ever attached to the same read-only calls every other request makes.
+- **Error handling** — GitHub API errors return their normal (already-safe) user-facing text. Any *unexpected* exception is logged in full server-side and reduced to a generic message for the client — internal details (stack traces, file paths, dependency internals) are never returned in a tool result. No token (a caller's own or the operator's `GITHUB_TOKEN`) is ever logged, echoed in output, or embedded in a URL.
+- **Caller-token forwarding was verified, not assumed** — since accepting an arbitrary caller-supplied credential and attaching it to outbound requests is the one genuinely new attack surface this change introduces, it was tested directly: an attempted header-injection payload (embedded CR/LF in the token) is rejected by Node's own `fetch` with a clean `TypeError` before any request leaves the server, caught by the existing error handling with no crash. A caller's token is confirmed (by code inspection and by `test/githubClient.test.js`) to reach only `createGitHubClient` — it's never interpolated into a log line, error message, or response text.
 
-**Remaining risks / not covered by this review:**
+**Remaining risks / not covered here:**
 
-- The bearer token is a single shared secret, not per-user auth — whoever holds it has full access, and revoking one person means rotating it for everyone. (Confirmed working in Claude's connector UI via Authentication: "None" + an `Authorization: Bearer <token>` request header — see Step 3 above.)
-- No rate limiting or abuse protection beyond GitHub's own API limits — a valid token holder could still exhaust the shared `GITHUB_TOKEN`'s quota.
-- No structured audit logging of who called what — see the note on observability in earlier project discussion; this review didn't add it.
-- `PUBLIC_HOST` (Host-header validation) and `MCP_BEARER_TOKEN` are independent controls set separately in Render; deploying code changes alone does not retroactively secure an already-running instance until these env vars are actually set there.
+- There's no per-caller rate limiting *on this server* — the only throttle is GitHub's own API limits (per anonymous IP pool, per operator token, or per caller-supplied token, depending on which applies). A high-volume caller can't be individually blocked without adding that separately.
+- No structured audit logging of who called what tool and when — this remains a known gap, not addressed here.
+- `PUBLIC_HOST` (Host-header validation) is still available and recommended, but it only restricts *which hostname* the server answers on the network layer — it has nothing to do with who's allowed to use the tools, since there's no identity concept here at all.
 
 ## Project files
 
@@ -157,8 +146,8 @@ This server underwent a security review focused on the HTTP deployment path. Cur
 - [tools/discovery.js](tools/discovery.js) — `search_github_repos`, `search_by_topic`, `get_trending_repos`
 - [tools/inspect.js](tools/inspect.js) — `get_repo_overview`, `get_repo_structure`, `get_file_content`, `get_recent_commits`, `list_branches`
 - [tools/compare.js](tools/compare.js) — `compare_repos`
-- [lib/github.js](lib/github.js) — shared GitHub API client, auth header injection, rate-limit/error handling, SSRF allowlist
+- [lib/github.js](lib/github.js) — shared GitHub API client, per-caller token priority (`createGitHubClient`), rate-limit/error handling, SSRF allowlist
 - [lib/format.js](lib/format.js) — shared formatting helpers (relative dates, repo-ref parsing, truncation, untrusted-content wrapping)
-- [lib/auth.js](lib/auth.js) — bearer-token auth gate for the HTTP transport (fail-closed)
+- [lib/auth.js](lib/auth.js) — extracts an optional caller-supplied GitHub token from the Authorization header; never blocks a request
 - [test/](test) — unit and integration tests, run with `npm test` (Node's built-in test runner, no extra dependencies)
 - [package.json](package.json) — dependencies (`@modelcontextprotocol/server`, `@modelcontextprotocol/express`, `@modelcontextprotocol/node`, `express`, `zod`)
