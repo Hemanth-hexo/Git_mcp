@@ -36,6 +36,19 @@ const requestLogger = createRequestLogger();
 // lib/auth.js and the "Rate limits" section of the README.
 app.all('/mcp', rateLimit, extractCallerToken, requestLogger, (req, res) => void node(req, res, req.body));
 
+// Temporary diagnostic route to determine the correct `trust proxy` hop
+// count for Render's actual proxy chain, since it can only be verified from
+// outside the local dev environment (no proxy there to model against).
+// Reports non-sensitive network metadata only. Removed once confirmed.
+app.get('/debug/network', (req, res) => {
+    res.json({
+        rawForwardedFor: req.headers['x-forwarded-for'] ?? null,
+        resolvedIp: req.ip,
+        resolvedIpsChain: req.ips,
+        directSocketPeer: req.socket.remoteAddress,
+    });
+});
+
 app.get('/', (_req, res) => {
     res.type('text/plain').send(
         'GitHub Discovery MCP server is running and open to anyone. Connect an MCP client to POST /mcp. ' +
