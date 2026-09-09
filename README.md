@@ -112,6 +112,10 @@ The search bucket is generous enough for casual interactive use. The core bucket
 
 To use your own token when connecting in Claude: Add custom connector → Authentication: **None** → **Additional request headers** → Add header → name `Authorization`, value `Bearer <your GitHub token>`. Entirely optional — the server works with zero setup, this just gets you a bigger, un-shared quota.
 
+**If you do bring your own token, two things worth knowing:**
+- You're trusting *this server's operator* not to log or misuse it — verified in code and by test that it never is (see [Security](#security)), but that's a claim about this specific deployment, not a platform guarantee. Treat any third-party MCP connector's request for your token the same way you'd treat handing a password to a website you didn't build.
+- Use a token scoped to **read-only, public-repo access only** (no `repo` write scope, no admin/org scopes) — this server only ever makes read requests, but a token with broader permissions than that is unnecessary risk if it were ever exposed, regardless of how this server itself behaves. If your token happens to have access to private repos, this server will read those too when asked — same as any GitHub API client using that token would.
+
 Running locally (`server.js`/stdio), the same priority applies except there's no per-request header to bring — set `GITHUB_TOKEN` in the Claude Desktop config's `env` block (or your shell) to raise your own limit.
 
 If a rate limit is hit, the server returns a clear message (instead of failing silently) telling you when it resets and reminding you that bringing your own token is an option.
@@ -126,6 +130,7 @@ This server underwent a security review, then a deliberate follow-up change: it 
 - **SSRF-safe file downloads** — `get_file_content` follows GitHub's `download_url` for large files only if it resolves to `https://raw.githubusercontent.com`; any other host or scheme is refused rather than fetched (see `isAllowedDownloadUrl` in [lib/github.js](lib/github.js)).
 - **No write access** — every GitHub API call this server makes is a read (`GET`). There is no code path that can create, modify, or delete anything on GitHub — including with a caller-supplied token, which is only ever attached to the same read-only calls every other request makes.
 - **Error handling** — GitHub API errors return their normal (already-safe) user-facing text. Any *unexpected* exception is logged in full server-side and reduced to a generic message for the client — internal details (stack traces, file paths, dependency internals) are never returned in a tool result. No token (a caller's own or the operator's `GITHUB_TOKEN`) is ever logged, echoed in output, or embedded in a URL.
+- **Caller-token forwarding was verified, not assumed** — since accepting an arbitrary caller-supplied credential and attaching it to outbound requests is the one genuinely new attack surface this change introduces, it was tested directly: an attempted header-injection payload (embedded CR/LF in the token) is rejected by Node's own `fetch` with a clean `TypeError` before any request leaves the server, caught by the existing error handling with no crash. A caller's token is confirmed (by code inspection and by `test/githubClient.test.js`) to reach only `createGitHubClient` — it's never interpolated into a log line, error message, or response text.
 
 **Remaining risks / not covered here:**
 
