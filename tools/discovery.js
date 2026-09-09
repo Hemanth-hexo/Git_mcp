@@ -1,5 +1,5 @@
 import * as z from 'zod/v4';
-import { githubFetch, toolErrorFromError } from '../lib/github.js';
+import { createGitHubClient, toolErrorFromError } from '../lib/github.js';
 import { daysSince, relativeTime, formatCount } from '../lib/format.js';
 
 const filtersShape = {
@@ -7,6 +7,10 @@ const filtersShape = {
     language: z.string().optional().describe("Restrict results to one programming language, e.g. 'Python' or 'TypeScript'."),
     limit: z.number().int().min(1).max(25).optional().describe('How many repos to return. Default: 10, max: 25.'),
 };
+
+function callerToken(ctx) {
+    return ctx?.http?.authInfo?.githubToken;
+}
 
 // Ranks by stars first, but discounts repos that have gone stale so an
 // actively maintained project can outrank a similarly popular abandoned one.
@@ -47,9 +51,9 @@ function formatRepoList(items, { limit, headerText }) {
     return `${headerText}\n\n${lines.join('\n\n')}`;
 }
 
-async function runRepoSearch({ searchQuery, limit, noResultsText }) {
+async function runRepoSearch(gh, { searchQuery, limit, noResultsText }) {
     const perFetch = Math.min(Math.max(limit * 3, 30), 100);
-    const res = await githubFetch('/search/repositories', {
+    const res = await gh.fetch('/search/repositories', {
         searchParams: { q: searchQuery, sort: 'stars', order: 'desc', per_page: perFetch },
     });
     const data = await res.json();
@@ -84,7 +88,8 @@ export function registerDiscoveryTools(server) {
                 filters: z.object(filtersShape).optional().describe('Optional filters to narrow or broaden the search.'),
             }),
         },
-        async ({ query, filters }) => {
+        async ({ query, filters }, ctx) => {
+            const gh = createGitHubClient(callerToken(ctx));
             const minStars = filters?.min_stars ?? 0;
             const language = filters?.language?.trim();
             const limit = filters?.limit ?? 10;
@@ -96,7 +101,7 @@ export function registerDiscoveryTools(server) {
 
             const constraints = [language && `language ${language}`, minStars && `${minStars}+ stars`].filter(Boolean).join(', ');
             try {
-                return await runRepoSearch({
+                return await runRepoSearch(gh, {
                     searchQuery,
                     limit,
                     noResultsText: `No repositories found for "${query}"${constraints ? ` (${constraints})` : ''}. Try broadening the query or lowering min_stars.`,
@@ -123,7 +128,8 @@ export function registerDiscoveryTools(server) {
                 filters: z.object(filtersShape).optional().describe('Optional filters to narrow or broaden the search.'),
             }),
         },
-        async ({ topic, filters }) => {
+        async ({ topic, filters }, ctx) => {
+            const gh = createGitHubClient(callerToken(ctx));
             const minStars = filters?.min_stars ?? 0;
             const language = filters?.language?.trim();
             const limit = filters?.limit ?? 10;
@@ -134,7 +140,7 @@ export function registerDiscoveryTools(server) {
             if (language) qualifiers.push(`language:${language}`);
 
             try {
-                return await runRepoSearch({
+                return await runRepoSearch(gh, {
                     searchQuery: qualifiers.join(' '),
                     limit,
                     noResultsText: `No repositories found tagged with topic "${normalizedTopic}". Double-check the topic spelling on GitHub, or try search_github_repos with free text instead.`,
@@ -161,7 +167,8 @@ export function registerDiscoveryTools(server) {
                 filters: z.object(filtersShape).optional().describe('Optional filters to narrow or broaden the results.'),
             }),
         },
-        async ({ since, filters }) => {
+        async ({ since, filters }, ctx) => {
+            const gh = createGitHubClient(callerToken(ctx));
             const window = since ?? 'weekly';
             const windowDays = { daily: 1, weekly: 7, monthly: 30 }[window];
             const minStars = filters?.min_stars ?? 0;
@@ -175,7 +182,7 @@ export function registerDiscoveryTools(server) {
 
             try {
                 const perFetch = Math.min(Math.max(limit * 3, 30), 100);
-                const res = await githubFetch('/search/repositories', {
+                const res = await gh.fetch('/search/repositories', {
                     searchParams: { q: qualifiers.join(' '), sort: 'stars', order: 'desc', per_page: perFetch },
                 });
                 const data = await res.json();

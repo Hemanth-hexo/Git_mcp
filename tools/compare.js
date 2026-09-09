@@ -1,12 +1,12 @@
 import * as z from 'zod/v4';
-import { githubFetch, approximateContributorCount, describeErrorSafely } from '../lib/github.js';
+import { createGitHubClient, describeErrorSafely } from '../lib/github.js';
 import { relativeTime, formatCount, parseRepoRef } from '../lib/format.js';
 
 function mdEscape(s) {
     return String(s ?? '').replace(/\|/g, '\\|');
 }
 
-async function fetchOneForCompare(rawRepo) {
+async function fetchOneForCompare(gh, rawRepo) {
     let owner, name;
     try {
         ({ owner, name } = parseRepoRef(rawRepo));
@@ -15,8 +15,8 @@ async function fetchOneForCompare(rawRepo) {
     }
     try {
         const [infoRes, contributorCount] = await Promise.all([
-            githubFetch(`/repos/${owner}/${name}`),
-            approximateContributorCount(owner, name),
+            gh.fetch(`/repos/${owner}/${name}`),
+            gh.contributorCount(owner, name),
         ]);
         const info = await infoRes.json();
         return { input: rawRepo, info, contributorCount };
@@ -41,8 +41,9 @@ export function registerCompareTools(server) {
                     .describe("2 to 4 repos, each as 'owner/name' or a GitHub URL, e.g. ['facebook/react', 'vuejs/vue']."),
             }),
         },
-        async ({ repos }) => {
-            const results = await Promise.all(repos.map(fetchOneForCompare));
+        async ({ repos }, ctx) => {
+            const gh = createGitHubClient(ctx?.http?.authInfo?.githubToken);
+            const results = await Promise.all(repos.map((r) => fetchOneForCompare(gh, r)));
             const ok = results.filter((r) => !r.error);
             const failed = results.filter((r) => r.error);
 
