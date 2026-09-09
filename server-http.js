@@ -20,10 +20,16 @@ const handler = createMcpHandler(createServer);
 const app = createMcpExpressApp({ host: '0.0.0.0', allowedHosts });
 const node = toNodeHandler(handler);
 
-// Render (and most hosts) sit behind a reverse proxy — without this, every
-// request appears to come from the proxy's own IP, and per-IP rate limiting
-// below would either be meaningless or lump every caller into one bucket.
-app.set('trust proxy', 1);
+// Render's platform puts every app behind two proxy hops before it reaches
+// this process: Render's own Cloudflare edge, then Render's internal router
+// (verified live: X-Forwarded-For arrived as "<real client>, <cloudflare
+// edge>, <render internal LB>" — a 3-entry chain). `trust proxy: 3` walks
+// back past both hops to the real client IP; `1` (the more commonly-seen
+// default for a single reverse proxy) was actually resolving to Render's
+// own internal LB address here, which is nearly constant across unrelated
+// callers — silently pooling everyone's rate limit into one shared bucket
+// instead of tracking each caller separately.
+app.set('trust proxy', 3);
 
 // Protects this server's own compute/bandwidth from a caller hammering it
 // directly — a separate concern from GitHub's own API limits, which only
@@ -35,19 +41,6 @@ const requestLogger = createRequestLogger();
 // optional caller-supplied GitHub token off the Authorization header. See
 // lib/auth.js and the "Rate limits" section of the README.
 app.all('/mcp', rateLimit, extractCallerToken, requestLogger, (req, res) => void node(req, res, req.body));
-
-// Temporary diagnostic route to determine the correct `trust proxy` hop
-// count for Render's actual proxy chain, since it can only be verified from
-// outside the local dev environment (no proxy there to model against).
-// Reports non-sensitive network metadata only. Removed once confirmed.
-app.get('/debug/network', (req, res) => {
-    res.json({
-        rawForwardedFor: req.headers['x-forwarded-for'] ?? null,
-        resolvedIp: req.ip,
-        resolvedIpsChain: req.ips,
-        directSocketPeer: req.socket.remoteAddress,
-    });
-});
 
 app.get('/', (_req, res) => {
     res.type('text/plain').send(
