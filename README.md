@@ -28,6 +28,15 @@ An MCP server that helps Claude find relevant open-source GitHub repositories fo
 
 All the `repo` parameters above accept either `"owner/name"` or a full GitHub URL — you can paste the `full_name`/URL straight out of a search result.
 
+**Shortcuts** — MCP clients that support "prompts" (Claude Desktop, Claude Code, claude.ai) surface these as slash commands, e.g. `/github-discovery:getinfo`:
+
+- `/getinfo repo:<owner/name>` — full repo overview
+- `/getcodeinfo repo:<owner/name> path:<file path>` — read and explain one file
+- `/findrepos query:<what you're looking for>` — search
+- `/comparerepos repos:<comma-separated list>` — side-by-side comparison
+
+These don't add any capability beyond the tools above — they're just a shortcut for the handful of things people ask for most, so you don't have to phrase the same request in full sentences every time. See [tools/prompts.js](tools/prompts.js).
+
 ## Requirements
 
 - Node.js 20 or later
@@ -41,6 +50,13 @@ Most people should just use the shared link above. Run it on your own machine in
 git clone https://github.com/Hemanth-hexo/Git_mcp.git
 cd Git_mcp
 npm install
+```
+
+**Or run it in Docker** (mainly useful for deploying somewhere other than Render, which builds natively and doesn't need this):
+
+```bash
+docker build -t github-discovery-mcp .
+docker run -p 3000:3000 --env GITHUB_TOKEN=your_token_here github-discovery-mcp
 ```
 
 Add to Claude Desktop's config (macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows: `%APPDATA%\Claude\claude_desktop_config.json`), using the absolute path to `server.js`:
@@ -122,6 +138,8 @@ To use your own token when connecting in Claude: Add custom connector → Authen
 
 Running locally (`server.js`/stdio), the same priority applies except there's no per-request header to bring — set `GITHUB_TOKEN` in the Claude Desktop config's `env` block (or your shell) to raise your own limit.
 
+**Response caching further reduces load on the shared/anonymous pool.** Repo lookups, file contents, and search results are cached in memory for 5 minutes — so if two different people (or the same person twice) ask about the same repo or search within that window, only the first request actually calls GitHub; the rest are served from cache, instantly and without spending any quota. This only ever applies to anonymous/server-token requests, never to a caller's own token (two different tokens can have different access to the same URL, so caching across them could leak one caller's data to another — see [Security](#security) and [lib/cache.js](lib/cache.js)). Verified live: a repeated `get_repo_overview` call dropped from ~1.4s to ~1ms.
+
 If a rate limit is hit, the server returns a clear message (instead of failing silently) telling you when it resets and reminding you that bringing your own token is an option.
 
 ## Security
@@ -138,6 +156,7 @@ This server underwent a security review, then a deliberate follow-up change: it 
 - **Per-caller rate limiting on this server itself** — 30 requests/minute per IP, independent of GitHub's own limits; see [Rate limits](#rate-limits) and [lib/rateLimit.js](lib/rateLimit.js). Protects the server's own bandwidth/compute from being hammered directly, which GitHub's API limits alone don't cover (they only throttle GitHub calls, not requests that never get that far).
 - **Basic request logging** — every `/mcp` request logs its timestamp, caller IP, JSON-RPC method, and tool name (for `tools/call`) to stderr (visible in Render's Logs tab). Deliberately excludes tool arguments, query text, and tokens — see [lib/requestLog.js](lib/requestLog.js) and its tests for what is and isn't logged.
 - **CI** — every push to `main` and every pull request runs the full test suite via GitHub Actions ([.github/workflows/test.yml](.github/workflows/test.yml)); the badge at the top of this README reflects the current status.
+- **Response cache never crosses the token boundary** — caching (see [Rate limits](#rate-limits)) only applies when a request carries no caller-supplied token; a request bringing one always fetches fresh. This is deliberate: two different tokens can have different access to the same URL (e.g. a private repo), and a shared cache entry keyed only by URL would otherwise be able to serve one caller's authorized data to a different, unauthorized caller. Tested directly (see `test/githubClient.test.js`'s "does not pollute the anonymous cache" and "never cached" cases).
 
 **Remaining risks / not covered here:**
 
@@ -153,11 +172,14 @@ This server underwent a security review, then a deliberate follow-up change: it 
 - [tools/discovery.js](tools/discovery.js) — `search_github_repos`, `search_by_topic`, `get_trending_repos`
 - [tools/inspect.js](tools/inspect.js) — `get_repo_overview`, `get_repo_structure`, `get_file_content`, `get_recent_commits`, `list_branches`
 - [tools/compare.js](tools/compare.js) — `compare_repos`
-- [lib/github.js](lib/github.js) — shared GitHub API client, per-caller token priority (`createGitHubClient`), rate-limit/error handling, SSRF allowlist
+- [tools/prompts.js](tools/prompts.js) — slash-command shortcuts: `getinfo`, `getcodeinfo`, `findrepos`, `comparerepos`
+- [lib/github.js](lib/github.js) — shared GitHub API client, per-caller token priority (`createGitHubClient`), response caching, rate-limit/error handling, SSRF allowlist
 - [lib/format.js](lib/format.js) — shared formatting helpers (relative dates, repo-ref parsing, truncation, untrusted-content wrapping)
 - [lib/auth.js](lib/auth.js) — extracts an optional caller-supplied GitHub token from the Authorization header; never blocks a request
 - [lib/rateLimit.js](lib/rateLimit.js) — per-IP request rate limiting for the HTTP transport (protects this server, independent of GitHub's own limits)
 - [lib/requestLog.js](lib/requestLog.js) — minimal per-request logging (method, tool name, caller IP) with no arguments/tokens ever logged
-- [test/](test) — unit and integration tests, run with `npm test` (Node's built-in test runner, no extra dependencies)
+- [lib/cache.js](lib/cache.js) — in-memory TTL cache for anonymous/server-token GitHub responses (never for caller-supplied tokens — see [Security](#security))
+- [Dockerfile](Dockerfile) — optional containerized build of the HTTP entry point, for deploying somewhere other than Render (Render itself doesn't need this — it builds natively from `package.json`)
+- [test/](test) — unit and integration tests, run with `npm test` (Node's built-in test runner + `@modelcontextprotocol/client`/`proxy-addr` as devDependencies for tests specifically)
 - [.github/workflows/test.yml](.github/workflows/test.yml) — CI: runs the test suite on every push to `main` and every pull request
 - [package.json](package.json) — dependencies (`@modelcontextprotocol/server`, `@modelcontextprotocol/express`, `@modelcontextprotocol/node`, `express`, `zod`)
