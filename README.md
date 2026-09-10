@@ -90,6 +90,7 @@ That's it — **no token setup required.** The server is public by design: anyon
 *(Optional)* In Render's Environment tab, you can still add:
 - `PUBLIC_HOST` — just the hostname (e.g. `your-app-name.onrender.com`, no `https://`). Locks the server to that hostname instead of accepting any `Host` header — protects against DNS-rebinding-style tricks, not a login of any kind.
 - `GITHUB_TOKEN` — a personal access token this server falls back to for anonymous callers who don't bring their own (see [Rate limits](#rate-limits)). Optional; the server works fine without it.
+- `GEMINI_API_KEY` — funds a small free daily trial of the AI-explanation feature for every visitor (see [AI explanations](#ai-explanations)). Optional; without it, that feature just asks people to bring their own AI API key instead.
 
 **Connect in Claude:** Settings → Connectors → Add custom connector → paste `https://your-app-name.onrender.com/mcp` → set **Authentication** to **None** (this server doesn't use OAuth or any login) → connect. Share the URL with anyone — that's the whole distribution step, nothing else to hand out.
 
@@ -112,6 +113,7 @@ Everything above is for MCP clients (Claude, etc.). The same server also exposes
 | `GET /api/repos/:owner/:name/file` | `path` (required) | Read one file's contents |
 | `GET /api/repos/:owner/:name/commits` | `branch`, `limit` | Recent commits |
 | `GET /api/repos/:owner/:name/branches` | `limit` | List branches |
+| `POST /api/repos/:owner/:name/explain` | headers: `X-AI-Key`, `X-AI-Provider` (both optional) | AI-generated explanation of the repo — see [AI explanations](#ai-explanations) |
 | `POST /api/compare` | body: `{"repos": ["owner/name", ...]}` (2-4) | Side-by-side comparison |
 
 All responses are JSON. Send `Authorization: Bearer <your GitHub token>` on any request to use your own rate limit instead of the shared pool — identical to how the MCP connector's bring-your-own-token works. Errors come back as `{"error": "<code>", "message": "..."}` with a matching HTTP status (`400` bad input, `404` not found, `429` rate limited with a `Retry-After` header, `502`/`500` for upstream/unexpected failures) — internal details are never included, same policy as the MCP error path (see [Security](#security)).
@@ -124,6 +126,37 @@ curl "https://git-mcp-rvrp.onrender.com/api/repos/facebook/react"
 ```
 
 See [routes/api.js](routes/api.js) for the exact route definitions, and [core/](core) for the underlying logic — both the MCP tools and this API call the same functions there, so a bug fix or improvement in one benefits both automatically.
+
+## Web frontend
+
+A plain HTML/CSS/JS website in [web/](web) — search, repo detail (overview/files/commits/branches), and compare, all calling the REST API above. No build step, no framework: it's static files, so it deploys to Vercel (or any static host) by pointing it at the `web/` folder directly.
+
+**Deploy to Vercel:**
+1. Import this GitHub repo into Vercel.
+2. Set **Root Directory** to `web`, framework preset to **Other** (no build command needed — it's static).
+3. Deploy. That's it.
+
+**Run it locally:**
+```bash
+cd web
+npx serve .
+```
+It defaults to calling the live Render API. To point it at a local backend instead (e.g. while developing the API), open it with `?api=` before the `#`, e.g. `http://localhost:3000/?api=http://localhost:3000/api#/`.
+
+**Security note on rendering repo content:** README files and AI explanations come from arbitrary public repos (or an AI model summarizing them) and are rendered as Markdown via [marked](https://github.com/markedjs/marked) — which does *not* sanitize embedded raw HTML on its own. Everything rendered this way is passed through [DOMPurify](https://github.com/cure53/DOMPurify) first (see `renderMarkdown()` in [web/app.js](web/app.js)); a malicious repo's README can't inject a working `<script>` tag through this page.
+
+## AI explanations
+
+The Files/Overview tab has an "✨ Explain this repo with AI" button — a genuinely AI-generated summary (what the project does, what stands out), not just the raw README, generated from the README + repo stats. This is the one place in the whole project that calls an LLM; everything else is deterministic GitHub API aggregation.
+
+Two ways it gets paid for:
+
+1. **The operator's free trial** — if you (the operator) set a `GEMINI_API_KEY` environment variable (Google's Gemini API has an actual free tier, unlike most providers), every visitor gets a few free explanations per day, tracked per caller IP (see [lib/aiTrialQuota.js](lib/aiTrialQuota.js)) so it can't run up an unbounded bill. No key configured = no free trial; the button then just asks people to bring their own.
+2. **Bring your own key** — anyone can add their own Gemini or Anthropic API key in the website's Settings panel (stored only in their browser, sent as `X-AI-Key`/`X-AI-Provider` headers directly to the API). Unlimited use, at their own cost, and it never touches the trial quota.
+
+If neither is available for a given request, the endpoint fails clearly (`503`, "bring your own key") rather than a confusing provider error.
+
+This is the exact same shift-the-cost-to-whoever-wants-it pattern as the GitHub bring-your-own-token design (see [Rate limits](#rate-limits)) — applied to AI instead of GitHub's API. The same trust note applies too: a bring-your-own AI key is sent to *this server*, which then calls Gemini/Anthropic on your behalf (the same shape as the GitHub token flow) — it is never sent directly from your browser to the AI provider. Verified by test that the key never appears in a log line, error message, or request body (see `test/aiProvider.test.js`), but that's a claim about this specific deployment, not a platform guarantee — the same "treat it like handing a password to a site you didn't build" caution applies here too.
 
 ## Example prompts
 
@@ -184,12 +217,15 @@ This server underwent a security review, then a deliberate follow-up change: it 
 - **Basic request logging** — every `/mcp` request logs its timestamp, caller IP, JSON-RPC method, and tool name (for `tools/call`) to stderr (visible in Render's Logs tab). Deliberately excludes tool arguments, query text, and tokens — see [lib/requestLog.js](lib/requestLog.js) and its tests for what is and isn't logged.
 - **CI** — every push to `main` and every pull request runs the full test suite via GitHub Actions ([.github/workflows/test.yml](.github/workflows/test.yml)); the badge at the top of this README reflects the current status.
 - **Response cache never crosses the token boundary** — caching (see [Rate limits](#rate-limits)) only applies when a request carries no caller-supplied token; a request bringing one always fetches fresh. This is deliberate: two different tokens can have different access to the same URL (e.g. a private repo), and a shared cache entry keyed only by URL would otherwise be able to serve one caller's authorized data to a different, unauthorized caller. Tested directly (see `test/githubClient.test.js`'s "does not pollute the anonymous cache" and "never cached" cases).
+- **AI-generated text is sanitized identically to README content** — the [web frontend](#web-frontend) renders both through the same `renderMarkdown()` (marked + DOMPurify) pipeline, so even if a repo's README contained a prompt-injection attempt that influenced the AI's output, the rendered result still can't execute a script in the viewer's browser.
+- **The AI-explain trial has its own separate, much stricter budget** — [lib/aiTrialQuota.js](lib/aiTrialQuota.js) caps the operator-funded free tier at a few calls per caller per day, independent of the general 30/minute rate limiter, since this one bounds real API spend rather than just server load. A caller bringing their own AI key skips this budget entirely (see [AI explanations](#ai-explanations)).
 
 **Remaining risks / not covered here:**
 
 - Rate limiting is per-IP, not per-identity — there's no login, so a caller behind a shared/rotating IP (or simply willing to rotate IPs) isn't meaningfully throttled by this alone. It stops accidental or unsophisticated hammering, not a determined attacker.
 - Logging is basic (stderr text, 7-day retention on Render's free tier) — there's no persistent store, dashboard, or alerting on top of it; someone has to go look at the logs.
 - `PUBLIC_HOST` (Host-header validation) is still available and recommended, but it only restricts *which hostname* the server answers on the network layer — it has nothing to do with who's allowed to use the tools, since there's no identity concept here at all.
+- The trial quota (like the general rate limiter) is keyed by IP, not identity — the same caveat about shared/rotating IPs applies to AI-spend protection too, just with a much smaller daily budget at stake.
 
 ## Project files
 
@@ -197,7 +233,9 @@ This server underwent a security review, then a deliberate follow-up change: it 
 - [server-http.js](server-http.js) — deployable entry point; serves the same tools over Streamable HTTP, plus mounts the REST API, for a shared connector URL
 - [lib/createServer.js](lib/createServer.js) — the shared `McpServer` factory both entry points use
 - [core/discovery.js](core/discovery.js), [core/inspect.js](core/inspect.js), [core/compare.js](core/compare.js) — the actual GitHub logic (search ranking, repo inspection, comparison), as plain functions returning plain data. Both the MCP tools and the REST API call these directly — one implementation, two interfaces.
+- [core/explain.js](core/explain.js) — builds the "explain this repo" prompt from repo data and calls whichever AI provider applies
 - [routes/api.js](routes/api.js) — the REST API (see [above](#rest-api-for-a-web-frontend-or-anything-that-isnt-an-mcp-client)); thin JSON/HTTP-status wrapping over `core/`
+- [web/](web) — the static frontend (search, repo detail, compare); see [Web frontend](#web-frontend)
 - [tools/discovery.js](tools/discovery.js), [tools/inspect.js](tools/inspect.js), [tools/compare.js](tools/compare.js) — the MCP tool registrations; thin text-formatting wrapping over the same `core/` functions
 - [tools/prompts.js](tools/prompts.js) — slash-command shortcuts: `getinfo`, `getcodeinfo`, `findrepos`, `comparerepos`
 - [lib/github.js](lib/github.js) — shared GitHub API client (`githubFetch`, `createGitHubClient`), per-caller token priority, response caching, rate-limit/error handling, SSRF allowlist
@@ -206,6 +244,8 @@ This server underwent a security review, then a deliberate follow-up change: it 
 - [lib/rateLimit.js](lib/rateLimit.js) — per-IP request rate limiting for the HTTP transport (protects this server, independent of GitHub's own limits)
 - [lib/requestLog.js](lib/requestLog.js) — minimal per-request logging (method, tool name, caller IP) with no arguments/tokens ever logged
 - [lib/cache.js](lib/cache.js) — in-memory TTL cache for anonymous/server-token GitHub responses (never for caller-supplied tokens — see [Security](#security))
+- [lib/aiProvider.js](lib/aiProvider.js) — thin wrappers over the Gemini and Anthropic REST APIs for the "explain this repo" feature
+- [lib/aiTrialQuota.js](lib/aiTrialQuota.js) — the operator-funded free trial's per-caller daily budget, separate from the general rate limiter
 - [Dockerfile](Dockerfile) — optional containerized build of the HTTP entry point, for deploying somewhere other than Render (Render itself doesn't need this — it builds natively from `package.json`)
 - [test/](test) — unit and integration tests, run with `npm test` (Node's built-in test runner + `@modelcontextprotocol/client`/`proxy-addr` as devDependencies for tests specifically)
 - [.github/workflows/test.yml](.github/workflows/test.yml) — CI: runs the test suite on every push to `main` and every pull request

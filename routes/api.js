@@ -8,8 +8,17 @@ import { GitHubApiError } from '../lib/github.js';
 import { searchRepos, searchByTopic, trendingRepos } from '../core/discovery.js';
 import { getRepoOverview, getRepoStructure, getFileContent, getRecentCommits, listBranches } from '../core/inspect.js';
 import { compareRepos } from '../core/compare.js';
+import { explainRepo } from '../core/explain.js';
+import { AiProviderError, SUPPORTED_PROVIDERS } from '../lib/aiProvider.js';
+import { createTrialQuota } from '../lib/aiTrialQuota.js';
 
 const router = express.Router();
+
+// Funds a small number of free AI explanations per caller per day using the
+// operator's own GEMINI_API_KEY (see /repos/:owner/:name/explain below) -
+// deliberately a much stricter, separate budget from the general rate
+// limiter, since this one bounds real API spend, not just server load.
+const trialQuota = createTrialQuota({ windowMs: 24 * 60 * 60 * 1000, max: 5 });
 
 // Unlike /mcp (a server-to-server connection, never a browser), this API is
 // meant to be called directly from a web frontend's own JavaScript — which
@@ -20,7 +29,7 @@ const router = express.Router();
 router.use((req, res, next) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-AI-Key, X-AI-Provider');
     if (req.method === 'OPTIONS') return res.status(204).end();
     next();
 });
@@ -89,6 +98,9 @@ function asyncRoute(handler) {
                 if (err.status === 404) return res.status(404).json({ error: 'not_found', message: 'Not found on GitHub.' });
                 return res.status(502).json({ error: 'github_api_error', message: err.message });
             }
+            if (err instanceof AiProviderError) {
+                return res.status(err.status || 502).json({ error: 'ai_provider_error', message: err.message });
+            }
             if (err?.expected) return res.status(400).json({ error: 'bad_request', message: err.message });
             console.error('[github-discovery] unexpected REST error:', err);
             return res.status(500).json({ error: 'internal_error', message: 'Unexpected internal error. It has been logged server-side.' });
@@ -143,6 +155,49 @@ router.get('/repos/:owner/:name', asyncRoute(async (req, res) => {
         latestRelease: release ? { tag: release.tag_name, publishedAt: release.published_at } : null,
         readme: readme ?? null,
     });
+}));
+
+// AI-generated explanation of a repo (README + stats), on top of everything
+// else here which is deterministic GitHub API aggregation. Two ways to pay
+// for the AI call: bring your own key (X-AI-Key + X-AI-Provider headers -
+// unlimited, at the caller's own cost, never touches the trial quota) or use
+// the operator-funded free trial (no headers - a few free explanations per
+// caller per day via the operator's own GEMINI_API_KEY, enforced by
+// trialQuota above). If neither a caller key nor an operator key exists,
+// this fails with a clear message rather than a confusing provider error.
+router.post('/repos/:owner/:name/explain', asyncRoute(async (req, res) => {
+    const repo = `${req.params.owner}/${req.params.name}`;
+    const ownKey = req.headers['x-ai-key'];
+    const ownProvider = req.headers['x-ai-provider'];
+
+    if (ownKey && ownProvider && !SUPPORTED_PROVIDERS.includes(ownProvider)) {
+        return res.status(400).json({ error: 'bad_request', message: `Unsupported X-AI-Provider "${ownProvider}". Supported: ${SUPPORTED_PROVIDERS.join(', ')}.` });
+    }
+
+    let ai;
+    if (ownKey) {
+        ai = { provider: ownProvider || 'gemini', apiKey: ownKey };
+    } else {
+        const trialKey = process.env.GEMINI_API_KEY;
+        if (!trialKey) {
+            return res.status(503).json({
+                error: 'no_trial_available',
+                message: 'No free trial is configured on this server. Bring your own AI API key (X-AI-Key / X-AI-Provider headers) to use this feature.',
+            });
+        }
+        const quota = trialQuota.consume(req.ip || 'unknown');
+        if (!quota.ok) {
+            res.set('Retry-After', String(quota.retryAfterSeconds));
+            return res.status(429).json({
+                error: 'trial_limit',
+                message: `Free trial limit reached for today. Try again later, or bring your own AI API key for unlimited use.`,
+            });
+        }
+        ai = { provider: 'gemini', apiKey: trialKey };
+    }
+
+    const result = await explainRepo({ repo, githubToken: callerToken(req), ai });
+    res.json(result);
 }));
 
 router.get('/repos/:owner/:name/structure', asyncRoute(async (req, res) => {
@@ -223,5 +278,12 @@ router.post('/compare', asyncRoute(async (req, res) => {
         failed: failed.map(({ input, error }) => ({ input, error })),
     });
 }));
+
+// Test-only: the trial quota is a module-level singleton so it persists
+// across requests within one running process (the whole point, in
+// production) - tests need to reset it between cases instead.
+export function _resetTrialQuotaForTest() {
+    trialQuota._usageForTest.clear();
+}
 
 export default router;
