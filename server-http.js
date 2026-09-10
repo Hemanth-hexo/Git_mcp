@@ -5,6 +5,7 @@ import { createServer } from './lib/createServer.js';
 import { extractCallerToken } from './lib/auth.js';
 import { createRateLimiter } from './lib/rateLimit.js';
 import { createRequestLogger } from './lib/requestLog.js';
+import apiRouter from './routes/api.js';
 
 // Deployed/shared entry point: exposes the same tools as server.js (stdio)
 // over Streamable HTTP, so the server can be added to Claude as a custom
@@ -42,10 +43,16 @@ const requestLogger = createRequestLogger();
 // lib/auth.js and the "Rate limits" section of the README.
 app.all('/mcp', rateLimit, extractCallerToken, requestLogger, (req, res) => void node(req, res, req.body));
 
+// Plain REST API over the same core logic (routes/api.js) — for a web
+// frontend or anything else that isn't an MCP client. Shares the same rate
+// limiting, caller-token support, and request logging as /mcp.
+app.use('/api', rateLimit, extractCallerToken, requestLogger, apiRouter);
+
 app.get('/', (_req, res) => {
     res.type('text/plain').send(
-        'GitHub Discovery MCP server is running and open to anyone. Connect an MCP client to POST /mcp. ' +
-        'Optionally send your own GitHub token as "Authorization: Bearer <token>" for a higher rate limit.'
+        'GitHub Discovery MCP server is running and open to anyone. Connect an MCP client to POST /mcp, ' +
+        'or use the plain REST API under /api (see /api/search etc.). Optionally send your own GitHub token ' +
+        'as "Authorization: Bearer <token>" for a higher rate limit, on either interface.'
     );
 });
 
