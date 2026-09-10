@@ -156,7 +156,7 @@ Two ways it gets paid for:
 
 If neither is available for a given request, the endpoint fails clearly (`503`, "bring your own key") rather than a confusing provider error.
 
-This is the exact same shift-the-cost-to-whoever-wants-it pattern as the GitHub bring-your-own-token design (see [Rate limits](#rate-limits)) — applied to AI instead of GitHub's API.
+This is the exact same shift-the-cost-to-whoever-wants-it pattern as the GitHub bring-your-own-token design (see [Rate limits](#rate-limits)) — applied to AI instead of GitHub's API. The same trust note applies too: a bring-your-own AI key is sent to *this server*, which then calls Gemini/Anthropic on your behalf (the same shape as the GitHub token flow) — it is never sent directly from your browser to the AI provider. Verified by test that the key never appears in a log line, error message, or request body (see `test/aiProvider.test.js`), but that's a claim about this specific deployment, not a platform guarantee — the same "treat it like handing a password to a site you didn't build" caution applies here too.
 
 ## Example prompts
 
