@@ -6,7 +6,7 @@ import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { _resetResponseCacheForTest } from '../lib/github.js';
-import apiRouter from '../routes/api.js';
+import apiRouter, { _resetTrialQuotaForTest } from '../routes/api.js';
 
 const realFetch = globalThis.fetch;
 let mockFetch;
@@ -42,6 +42,8 @@ after(() => new Promise((resolve) => server.close(resolve)));
 
 beforeEach(() => {
     _resetResponseCacheForTest();
+    _resetTrialQuotaForTest();
+    delete process.env.GEMINI_API_KEY;
     // Reset to a mock that fails loudly if a test forgets to install its own
     // — prevents a previous test's leftover mock from silently answering a
     // later test's requests (exactly the bug that motivated this reset).
@@ -213,5 +215,85 @@ describe('error mapping', () => {
         const body = await res.json();
         assert.ok(!body.message.includes('/etc/passwd'));
         assert.equal(body.error, 'internal_error');
+    });
+});
+
+describe('POST /api/repos/:owner/:name/explain', () => {
+    // Serves the same GitHub calls get_repo_overview needs, plus whichever
+    // AI provider endpoint is hit — real requests for this route always
+    // touch both, so both need to be handled by one mock.
+    function mockOverviewAndAi({ aiUrlMatch, aiResponse }) {
+        installFetchMock(async (url) => {
+            const u = String(url);
+            if (aiUrlMatch.test(u)) return aiResponse();
+            if (u.includes('/languages')) return jsonResponse({ JavaScript: 100 });
+            if (u.includes('/releases/latest')) return new Response('', { status: 404 });
+            if (u.includes('/readme')) return new Response('# Hi', { status: 200 });
+            if (u.includes('/contributors')) return new Response('[]', { status: 200 });
+            return jsonResponse(sampleRepo);
+        });
+    }
+
+    test('uses the caller-provided key (X-AI-Key / X-AI-Provider) and never touches the trial quota', async () => {
+        mockOverviewAndAi({
+            aiUrlMatch: /anthropic\.com/,
+            aiResponse: () => jsonResponse({ content: [{ text: 'Explanation via caller key.' }] }),
+        });
+        const res = await fetch(`${baseUrl}/repos/facebook/react/explain`, {
+            method: 'POST',
+            headers: { 'X-AI-Key': 'callers-own-key', 'X-AI-Provider': 'anthropic' },
+        });
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.equal(body.explanation, 'Explanation via caller key.');
+    });
+
+    test('falls back to the operator trial (Gemini) when no caller key is given', async () => {
+        process.env.GEMINI_API_KEY = 'operator-trial-key';
+        mockOverviewAndAi({
+            aiUrlMatch: /generativelanguage\.googleapis\.com/,
+            aiResponse: () => jsonResponse({ candidates: [{ content: { parts: [{ text: 'Explanation via trial.' }] } }] }),
+        });
+        const res = await fetch(`${baseUrl}/repos/facebook/react/explain`, { method: 'POST' });
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.equal(body.explanation, 'Explanation via trial.');
+    });
+
+    test('503s with a clear message when no caller key and no trial is configured', async () => {
+        const res = await fetch(`${baseUrl}/repos/facebook/react/explain`, { method: 'POST' });
+        assert.equal(res.status, 503);
+        const body = await res.json();
+        assert.equal(body.error, 'no_trial_available');
+        assert.match(body.message, /bring your own/i);
+    });
+
+    test('429s once the trial quota is exhausted, and never falls through to a real AI call', async () => {
+        process.env.GEMINI_API_KEY = 'operator-trial-key';
+        let aiCallCount = 0;
+        mockOverviewAndAi({
+            aiUrlMatch: /generativelanguage\.googleapis\.com/,
+            aiResponse: () => {
+                aiCallCount += 1;
+                return jsonResponse({ candidates: [{ content: { parts: [{ text: 'ok' }] } }] });
+            },
+        });
+        for (let i = 0; i < 5; i++) {
+            const ok = await fetch(`${baseUrl}/repos/facebook/react/explain`, { method: 'POST' });
+            assert.equal(ok.status, 200, `request ${i + 1} of 5 should be within the free quota`);
+        }
+        const sixth = await fetch(`${baseUrl}/repos/facebook/react/explain`, { method: 'POST' });
+        assert.equal(sixth.status, 429);
+        const body = await sixth.json();
+        assert.equal(body.error, 'trial_limit');
+        assert.equal(aiCallCount, 5, 'the 6th request must not reach the AI provider at all');
+    });
+
+    test('400s for an unsupported X-AI-Provider', async () => {
+        const res = await fetch(`${baseUrl}/repos/facebook/react/explain`, {
+            method: 'POST',
+            headers: { 'X-AI-Key': 'some-key', 'X-AI-Provider': 'not-a-real-provider' },
+        });
+        assert.equal(res.status, 400);
     });
 });
