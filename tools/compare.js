@@ -1,28 +1,9 @@
 import * as z from 'zod/v4';
-import { createGitHubClient, describeErrorSafely } from '../lib/github.js';
-import { relativeTime, formatCount, parseRepoRef } from '../lib/format.js';
+import { relativeTime, formatCount } from '../lib/format.js';
+import { compareRepos } from '../core/compare.js';
 
 function mdEscape(s) {
     return String(s ?? '').replace(/\|/g, '\\|');
-}
-
-async function fetchOneForCompare(gh, rawRepo) {
-    let owner, name;
-    try {
-        ({ owner, name } = parseRepoRef(rawRepo));
-    } catch (err) {
-        return { input: rawRepo, error: err.message };
-    }
-    try {
-        const [infoRes, contributorCount] = await Promise.all([
-            gh.fetch(`/repos/${owner}/${name}`),
-            gh.contributorCount(owner, name),
-        ]);
-        const info = await infoRes.json();
-        return { input: rawRepo, info, contributorCount };
-    } catch (err) {
-        return { input: rawRepo, error: describeErrorSafely(err, `fetching ${owner}/${name}`) };
-    }
 }
 
 export function registerCompareTools(server) {
@@ -42,10 +23,7 @@ export function registerCompareTools(server) {
             }),
         },
         async ({ repos }, ctx) => {
-            const gh = createGitHubClient(ctx?.http?.authInfo?.githubToken);
-            const results = await Promise.all(repos.map((r) => fetchOneForCompare(gh, r)));
-            const ok = results.filter((r) => !r.error);
-            const failed = results.filter((r) => r.error);
+            const { ok, failed } = await compareRepos({ repos, token: ctx?.http?.authInfo?.githubToken });
 
             if (ok.length < 2) {
                 const lines = failed.map((f) => `- ${f.input}: ${f.error}`);

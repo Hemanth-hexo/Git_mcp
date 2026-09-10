@@ -98,6 +98,33 @@ That's it — **no token setup required.** The server is public by design: anyon
 - Render's free tier spins the service down after 15 minutes of inactivity; the next request after that takes 30-60 seconds to wake it back up.
 - Because it's genuinely open, GitHub's own rate limits are the only thing standing between this and abuse — see [Rate limits](#rate-limits) for how that's handled and what its limits are.
 
+## REST API (for a web frontend, or anything that isn't an MCP client)
+
+Everything above is for MCP clients (Claude, etc.). The same server also exposes a plain JSON REST API under `/api` — same deployment, same rate limiting, same bring-your-own-GitHub-token support, no MCP protocol involved. This is what a website or app would call directly. CORS is open (`Access-Control-Allow-Origin: *`) so it can be called straight from browser JavaScript on any origin — this is a fully public, read-only, unauthenticated-by-default API, so that doesn't widen access to anything.
+
+| Method & path | Query params | What it does |
+|---|---|---|
+| `GET /api/search` | `q` (required), `language`, `minStars`, `limit` | Free-text repo search |
+| `GET /api/search/topic` | `topic` (required), `language`, `minStars`, `limit` | Search by GitHub topic tag |
+| `GET /api/trending` | `since` (`daily`\|`weekly`\|`monthly`), `language`, `minStars`, `limit` | New repos gaining stars fast |
+| `GET /api/repos/:owner/:name` | — | Full repo overview |
+| `GET /api/repos/:owner/:name/structure` | `path` | List files/folders at a path |
+| `GET /api/repos/:owner/:name/file` | `path` (required) | Read one file's contents |
+| `GET /api/repos/:owner/:name/commits` | `branch`, `limit` | Recent commits |
+| `GET /api/repos/:owner/:name/branches` | `limit` | List branches |
+| `POST /api/compare` | body: `{"repos": ["owner/name", ...]}` (2-4) | Side-by-side comparison |
+
+All responses are JSON. Send `Authorization: Bearer <your GitHub token>` on any request to use your own rate limit instead of the shared pool — identical to how the MCP connector's bring-your-own-token works. Errors come back as `{"error": "<code>", "message": "..."}` with a matching HTTP status (`400` bad input, `404` not found, `429` rate limited with a `Retry-After` header, `502`/`500` for upstream/unexpected failures) — internal details are never included, same policy as the MCP error path (see [Security](#security)).
+
+Example:
+
+```bash
+curl "https://git-mcp-rvrp.onrender.com/api/search?q=rag&limit=3"
+curl "https://git-mcp-rvrp.onrender.com/api/repos/facebook/react"
+```
+
+See [routes/api.js](routes/api.js) for the exact route definitions, and [core/](core) for the underlying logic — both the MCP tools and this API call the same functions there, so a bug fix or improvement in one benefits both automatically.
+
 ## Example prompts
 
 Once connected, just talk to Claude naturally:
@@ -167,13 +194,13 @@ This server underwent a security review, then a deliberate follow-up change: it 
 ## Project files
 
 - [server.js](server.js) — local entry point; serves the tools over stdio (for Claude Desktop / the Inspector)
-- [server-http.js](server-http.js) — deployable entry point; serves the same tools over Streamable HTTP (for a shared connector URL)
+- [server-http.js](server-http.js) — deployable entry point; serves the same tools over Streamable HTTP, plus mounts the REST API, for a shared connector URL
 - [lib/createServer.js](lib/createServer.js) — the shared `McpServer` factory both entry points use
-- [tools/discovery.js](tools/discovery.js) — `search_github_repos`, `search_by_topic`, `get_trending_repos`
-- [tools/inspect.js](tools/inspect.js) — `get_repo_overview`, `get_repo_structure`, `get_file_content`, `get_recent_commits`, `list_branches`
-- [tools/compare.js](tools/compare.js) — `compare_repos`
+- [core/discovery.js](core/discovery.js), [core/inspect.js](core/inspect.js), [core/compare.js](core/compare.js) — the actual GitHub logic (search ranking, repo inspection, comparison), as plain functions returning plain data. Both the MCP tools and the REST API call these directly — one implementation, two interfaces.
+- [routes/api.js](routes/api.js) — the REST API (see [above](#rest-api-for-a-web-frontend-or-anything-that-isnt-an-mcp-client)); thin JSON/HTTP-status wrapping over `core/`
+- [tools/discovery.js](tools/discovery.js), [tools/inspect.js](tools/inspect.js), [tools/compare.js](tools/compare.js) — the MCP tool registrations; thin text-formatting wrapping over the same `core/` functions
 - [tools/prompts.js](tools/prompts.js) — slash-command shortcuts: `getinfo`, `getcodeinfo`, `findrepos`, `comparerepos`
-- [lib/github.js](lib/github.js) — shared GitHub API client, per-caller token priority (`createGitHubClient`), response caching, rate-limit/error handling, SSRF allowlist
+- [lib/github.js](lib/github.js) — shared GitHub API client (`githubFetch`, `createGitHubClient`), per-caller token priority, response caching, rate-limit/error handling, SSRF allowlist
 - [lib/format.js](lib/format.js) — shared formatting helpers (relative dates, repo-ref parsing, truncation, untrusted-content wrapping)
 - [lib/auth.js](lib/auth.js) — extracts an optional caller-supplied GitHub token from the Authorization header; never blocks a request
 - [lib/rateLimit.js](lib/rateLimit.js) — per-IP request rate limiting for the HTTP transport (protects this server, independent of GitHub's own limits)

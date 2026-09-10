@@ -1,6 +1,7 @@
 import * as z from 'zod/v4';
-import { createGitHubClient, toolErrorFromError } from '../lib/github.js';
-import { daysSince, relativeTime, formatCount } from '../lib/format.js';
+import { toolErrorFromError } from '../lib/github.js';
+import { relativeTime, formatCount } from '../lib/format.js';
+import { searchRepos, searchByTopic, trendingRepos } from '../core/discovery.js';
 
 const filtersShape = {
     min_stars: z.number().int().min(0).optional().describe('Only include repos with at least this many stars. Default: 0 (no minimum).'),
@@ -10,21 +11,6 @@ const filtersShape = {
 
 function callerToken(ctx) {
     return ctx?.http?.authInfo?.githubToken;
-}
-
-// Ranks by stars first, but discounts repos that have gone stale so an
-// actively maintained project can outrank a similarly popular abandoned one.
-function rankRepos(items, limit) {
-    const scored = items.map((repo) => {
-        const stars = repo.stargazers_count ?? 0;
-        const starScore = Math.log10(stars + 1);
-        const days = daysSince(repo.pushed_at ?? repo.updated_at);
-        const recencyScore = 1 / (1 + days / 90);
-        const combined = starScore * (0.7 + 0.3 * recencyScore);
-        return { repo, combined };
-    });
-    scored.sort((a, b) => b.combined - a.combined);
-    return scored.slice(0, limit).map((s) => s.repo);
 }
 
 function buildSnippet(repo) {
@@ -39,33 +25,14 @@ function buildSnippet(repo) {
     return `${lead} (${extras.join(' · ')})`;
 }
 
-function formatRepoList(items, { limit, headerText }) {
-    if (items.length === 0) return null;
-    const ranked = rankRepos(items, limit);
-    const lines = ranked.map((repo, i) => [
+function formatRepoList(repos, headerText) {
+    const lines = repos.map((repo, i) => [
         `${i + 1}. ${repo.full_name}${repo.archived ? ' [ARCHIVED]' : ''}`,
         `   URL: ${repo.html_url}`,
         `   Stars: ${repo.stargazers_count.toLocaleString()} | Language: ${repo.language ?? 'Not specified'} | Last pushed: ${relativeTime(repo.pushed_at)} (${repo.pushed_at.slice(0, 10)})`,
         `   ${buildSnippet(repo)}`,
     ].join('\n'));
     return `${headerText}\n\n${lines.join('\n\n')}`;
-}
-
-async function runRepoSearch(gh, { searchQuery, limit, noResultsText }) {
-    const perFetch = Math.min(Math.max(limit * 3, 30), 100);
-    const res = await gh.fetch('/search/repositories', {
-        searchParams: { q: searchQuery, sort: 'stars', order: 'desc', per_page: perFetch },
-    });
-    const data = await res.json();
-    const items = data.items ?? [];
-    if (items.length === 0) {
-        return { content: [{ type: 'text', text: noResultsText }] };
-    }
-    const text = formatRepoList(items, {
-        limit,
-        headerText: `Found ${data.total_count.toLocaleString()} total matches. Showing top ${Math.min(limit, items.length)}, ranked by stars + recent activity:`,
-    });
-    return { content: [{ type: 'text', text }] };
 }
 
 export function registerDiscoveryTools(server) {
@@ -89,23 +56,23 @@ export function registerDiscoveryTools(server) {
             }),
         },
         async ({ query, filters }, ctx) => {
-            const gh = createGitHubClient(callerToken(ctx));
             const minStars = filters?.min_stars ?? 0;
             const language = filters?.language?.trim();
             const limit = filters?.limit ?? 10;
-
-            const qualifiers = [];
-            if (minStars > 0) qualifiers.push(`stars:>=${minStars}`);
-            if (language) qualifiers.push(`language:${language}`);
-            const searchQuery = [query.trim(), ...qualifiers].join(' ');
-
             const constraints = [language && `language ${language}`, minStars && `${minStars}+ stars`].filter(Boolean).join(', ');
+
             try {
-                return await runRepoSearch(gh, {
-                    searchQuery,
-                    limit,
-                    noResultsText: `No repositories found for "${query}"${constraints ? ` (${constraints})` : ''}. Try broadening the query or lowering min_stars.`,
-                });
+                const result = await searchRepos({ query, minStars, language, limit, token: callerToken(ctx) });
+                if (result.repos.length === 0) {
+                    return {
+                        content: [{
+                            type: 'text',
+                            text: `No repositories found for "${query}"${constraints ? ` (${constraints})` : ''}. Try broadening the query or lowering min_stars.`,
+                        }],
+                    };
+                }
+                const headerText = `Found ${result.totalCount.toLocaleString()} total matches. Showing top ${Math.min(limit, result.repos.length)}, ranked by stars + recent activity:`;
+                return { content: [{ type: 'text', text: formatRepoList(result.repos, headerText) }] };
             } catch (err) {
                 return toolErrorFromError(err, `searching for "${query}"`);
             }
@@ -129,22 +96,22 @@ export function registerDiscoveryTools(server) {
             }),
         },
         async ({ topic, filters }, ctx) => {
-            const gh = createGitHubClient(callerToken(ctx));
             const minStars = filters?.min_stars ?? 0;
             const language = filters?.language?.trim();
             const limit = filters?.limit ?? 10;
 
-            const normalizedTopic = topic.trim().toLowerCase().replace(/\s+/g, '-');
-            const qualifiers = [`topic:${normalizedTopic}`];
-            if (minStars > 0) qualifiers.push(`stars:>=${minStars}`);
-            if (language) qualifiers.push(`language:${language}`);
-
             try {
-                return await runRepoSearch(gh, {
-                    searchQuery: qualifiers.join(' '),
-                    limit,
-                    noResultsText: `No repositories found tagged with topic "${normalizedTopic}". Double-check the topic spelling on GitHub, or try search_github_repos with free text instead.`,
-                });
+                const result = await searchByTopic({ topic, minStars, language, limit, token: callerToken(ctx) });
+                if (result.repos.length === 0) {
+                    return {
+                        content: [{
+                            type: 'text',
+                            text: `No repositories found tagged with topic "${result.topic}". Double-check the topic spelling on GitHub, or try search_github_repos with free text instead.`,
+                        }],
+                    };
+                }
+                const headerText = `Found ${result.totalCount.toLocaleString()} total matches. Showing top ${Math.min(limit, result.repos.length)}, ranked by stars + recent activity:`;
+                return { content: [{ type: 'text', text: formatRepoList(result.repos, headerText) }] };
             } catch (err) {
                 return toolErrorFromError(err, `searching topic "${topic}"`);
             }
@@ -168,41 +135,28 @@ export function registerDiscoveryTools(server) {
             }),
         },
         async ({ since, filters }, ctx) => {
-            const gh = createGitHubClient(callerToken(ctx));
-            const window = since ?? 'weekly';
-            const windowDays = { daily: 1, weekly: 7, monthly: 30 }[window];
             const minStars = filters?.min_stars ?? 0;
             const language = filters?.language?.trim();
             const limit = filters?.limit ?? 10;
 
-            const sinceDate = new Date(Date.now() - windowDays * 86_400_000).toISOString().slice(0, 10);
-            const qualifiers = [`created:>=${sinceDate}`];
-            if (minStars > 0) qualifiers.push(`stars:>=${minStars}`);
-            if (language) qualifiers.push(`language:${language}`);
-
             try {
-                const perFetch = Math.min(Math.max(limit * 3, 30), 100);
-                const res = await gh.fetch('/search/repositories', {
-                    searchParams: { q: qualifiers.join(' '), sort: 'stars', order: 'desc', per_page: perFetch },
-                });
-                const data = await res.json();
-                const items = data.items ?? [];
-                if (items.length === 0) {
+                const result = await trendingRepos({ since, minStars, language, limit, token: callerToken(ctx) });
+                if (result.repos.length === 0) {
                     return {
                         content: [{
                             type: 'text',
-                            text: `No new repos found in the last ${windowDays} day(s) matching those filters. Try a wider window (monthly) or fewer filters.`,
+                            text: `No new repos found in the last ${result.windowDays} day(s) matching those filters. Try a wider window (monthly) or fewer filters.`,
                         }],
                     };
                 }
-                const lines = items.slice(0, limit).map((repo, i) => [
+                const lines = result.repos.map((repo, i) => [
                     `${i + 1}. ${repo.full_name}`,
                     `   URL: ${repo.html_url}`,
                     `   Stars: ${repo.stargazers_count.toLocaleString()} | Language: ${repo.language ?? 'Not specified'} | Created: ${relativeTime(repo.created_at)}`,
                     `   ${repo.description?.trim() || 'No description provided.'}`,
                 ].join('\n'));
                 const text =
-                    `Repos created in the last ${windowDays} day(s), ranked by stars so far ` +
+                    `Repos created in the last ${result.windowDays} day(s), ranked by stars so far ` +
                     `(an approximation of "trending" — GitHub doesn't expose real trend data via API):\n\n${lines.join('\n\n')}`;
                 return { content: [{ type: 'text', text }] };
             } catch (err) {
