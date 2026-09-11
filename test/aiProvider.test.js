@@ -128,7 +128,7 @@ describe('generateExplanation', () => {
         assert.equal(calls, 2);
     });
 
-    test('gives up after repeated 503s from Gemini instead of retrying forever', async () => {
+    test('gives up after both Gemini models are persistently 503, instead of retrying forever', async () => {
         let calls = 0;
         globalThis.fetch = async () => {
             calls += 1;
@@ -139,10 +139,25 @@ describe('generateExplanation', () => {
             (err) => {
                 assert.ok(err instanceof AiProviderError);
                 assert.equal(err.status, 502);
+                assert.match(err.message, /both the primary and fallback/);
                 return true;
             }
         );
-        assert.equal(calls, 3); // 1 initial attempt + 2 retries, then give up
+        // (1 initial + 2 retries) against the primary model, then the same against the fallback
+        assert.equal(calls, 6);
+    });
+
+    test('falls back to Flash-Lite when the primary model is persistently overloaded (503), not just rate-limited (429)', async () => {
+        let calls = 0;
+        globalThis.fetch = async (url) => {
+            calls += 1;
+            if (String(url).includes('gemini-flash-latest')) return new Response('overloaded', { status: 503 });
+            return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'from the fallback model' }] } }] }), { status: 200 });
+        };
+        const text = await generateExplanation({ provider: 'gemini', apiKey: 'k', systemPrompt: 's', userPrompt: 'u' });
+        assert.equal(text, 'from the fallback model');
+        // (1 initial + 2 retries) exhausted against the primary, then 1 successful call to the fallback
+        assert.equal(calls, 4);
     });
 
     test('retries Anthropic\'s 529 "overloaded_error" the same way', async () => {
