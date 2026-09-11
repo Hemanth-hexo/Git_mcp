@@ -147,7 +147,7 @@ It defaults to calling the live Render API. To point it at a local backend inste
 
 ## AI explanations
 
-The Files/Overview tab has an "✨ Explain this repo with AI" button — a genuinely AI-generated summary (what the project does, what stands out), not just the raw README, generated from the README + repo stats. This is the one place in the whole project that calls an LLM; everything else is deterministic GitHub API aggregation.
+The Overview tab has an "✨ Explain this repo with AI" button — a structured, decision-oriented explanation generated from the README + repo stats (license, activity, contributor count, archived status, etc.), not just a summary of the README. It always covers the same five sections: **What it is**, **Who it's for**, **Strengths**, **Watch out for**, and a direct **Verdict** ("use this if ___, skip it if ___") — built specifically so someone can glance at it and get an instant read on whether a repo is worth their time, not just a rewording of its description. This is the one place in the whole project that calls an LLM; everything else is deterministic GitHub API aggregation.
 
 Two ways it gets paid for:
 
