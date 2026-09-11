@@ -84,7 +84,7 @@ export async function getFileContent({ repo, path, token } = {}) {
         if (!isAllowedDownloadUrl(data.download_url)) {
             return { owner, name, path: cleanPath, downloadRefused: true, htmlUrl: data.html_url };
         }
-        const rawRes = await fetch(data.download_url, { headers: { 'User-Agent': 'github-discovery-mcp/1.0' } });
+        const rawRes = await fetch(data.download_url, { headers: { 'User-Agent': 'gitty-mcp/1.0' } });
         if (!rawRes.ok) throw new Error(`Could not download large file (HTTP ${rawRes.status}).`);
         text = await rawRes.text();
     } else {

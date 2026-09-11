@@ -50,14 +50,14 @@ app.use('/api', rateLimit, extractCallerToken, requestLogger, apiRouter);
 
 app.get('/', (_req, res) => {
     res.type('text/plain').send(
-        'GitHub Discovery MCP server is running and open to anyone. Connect an MCP client to POST /mcp, ' +
+        'Gitty MCP server is running and open to anyone. Connect an MCP client to POST /mcp, ' +
         'or use the plain REST API under /api (see /api/search etc.). Optionally send your own GitHub token ' +
         'as "Authorization: Bearer <token>" for a higher rate limit, on either interface.'
     );
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.error(`GitHub Discovery MCP server listening on 0.0.0.0:${PORT} (POST /mcp)`);
+    console.error(`Gitty MCP server listening on 0.0.0.0:${PORT} (POST /mcp)`);
     if (!allowedHosts) {
         console.error('PUBLIC_HOST is not set — Host header validation is disabled. Set it to your deployed hostname to lock this down.');
     }

@@ -1,4 +1,6 @@
-# GitHub Discovery MCP Server
+# Gitty
+
+*An MCP server that helps Claude find, inspect, and compare open-source GitHub repos.*
 
 [![Test](https://github.com/Hemanth-hexo/Git_mcp/actions/workflows/test.yml/badge.svg)](https://github.com/Hemanth-hexo/Git_mcp/actions/workflows/test.yml)
 
@@ -28,7 +30,7 @@ An MCP server that helps Claude find relevant open-source GitHub repositories fo
 
 All the `repo` parameters above accept either `"owner/name"` or a full GitHub URL — you can paste the `full_name`/URL straight out of a search result.
 
-**Shortcuts** — MCP clients that support "prompts" (Claude Desktop, Claude Code, claude.ai) surface these as slash commands, e.g. `/github-discovery:getinfo`:
+**Shortcuts** — MCP clients that support "prompts" (Claude Desktop, Claude Code, claude.ai) surface these as slash commands, e.g. `/gitty:getinfo`:
 
 - `/getinfo repo:<owner/name>` — full repo overview
 - `/getcodeinfo repo:<owner/name> path:<file path>` — read and explain one file
@@ -55,8 +57,8 @@ npm install
 **Or run it in Docker** (mainly useful for deploying somewhere other than Render, which builds natively and doesn't need this):
 
 ```bash
-docker build -t github-discovery-mcp .
-docker run -p 3000:3000 --env GITHUB_TOKEN=your_token_here github-discovery-mcp
+docker build -t gitty-mcp .
+docker run -p 3000:3000 --env GITHUB_TOKEN=your_token_here gitty-mcp
 ```
 
 Add to Claude Desktop's config (macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows: `%APPDATA%\Claude\claude_desktop_config.json`), using the absolute path to `server.js`:
@@ -64,7 +66,7 @@ Add to Claude Desktop's config (macOS: `~/Library/Application Support/Claude/cla
 ```json
 {
   "mcpServers": {
-    "github-discovery": {
+    "gitty": {
       "command": "node",
       "args": ["/absolute/path/to/Git_mcp/server.js"]
     }
