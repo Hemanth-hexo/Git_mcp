@@ -67,8 +67,12 @@ describe('generateExplanation', () => {
         );
     });
 
-    test('a 429 from the provider is reported as status 429', async () => {
-        globalThis.fetch = async () => new Response('', { status: 429 });
+    test('a 429 from the provider is reported as status 429, without retrying', async () => {
+        let calls = 0;
+        globalThis.fetch = async () => {
+            calls += 1;
+            return new Response('', { status: 429 });
+        };
         await assert.rejects(
             () => generateExplanation({ provider: 'gemini', apiKey: 'k', systemPrompt: 's', userPrompt: 'u' }),
             (err) => {
@@ -76,5 +80,47 @@ describe('generateExplanation', () => {
                 return true;
             }
         );
+        assert.equal(calls, 1);
+    });
+
+    test('retries a transient Gemini 503 ("model overloaded") and succeeds once it clears', async () => {
+        let calls = 0;
+        globalThis.fetch = async () => {
+            calls += 1;
+            if (calls === 1) return new Response('overloaded', { status: 503 });
+            return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'recovered' }] } }] }), { status: 200 });
+        };
+        const text = await generateExplanation({ provider: 'gemini', apiKey: 'k', systemPrompt: 's', userPrompt: 'u' });
+        assert.equal(text, 'recovered');
+        assert.equal(calls, 2);
+    });
+
+    test('gives up after repeated 503s from Gemini instead of retrying forever', async () => {
+        let calls = 0;
+        globalThis.fetch = async () => {
+            calls += 1;
+            return new Response('still overloaded', { status: 503 });
+        };
+        await assert.rejects(
+            () => generateExplanation({ provider: 'gemini', apiKey: 'k', systemPrompt: 's', userPrompt: 'u' }),
+            (err) => {
+                assert.ok(err instanceof AiProviderError);
+                assert.equal(err.status, 502);
+                return true;
+            }
+        );
+        assert.equal(calls, 3); // 1 initial attempt + 2 retries, then give up
+    });
+
+    test('retries Anthropic\'s 529 "overloaded_error" the same way', async () => {
+        let calls = 0;
+        globalThis.fetch = async () => {
+            calls += 1;
+            if (calls === 1) return new Response('overloaded', { status: 529 });
+            return new Response(JSON.stringify({ content: [{ text: 'recovered' }] }), { status: 200 });
+        };
+        const text = await generateExplanation({ provider: 'anthropic', apiKey: 'k', systemPrompt: 's', userPrompt: 'u' });
+        assert.equal(text, 'recovered');
+        assert.equal(calls, 2);
     });
 });
