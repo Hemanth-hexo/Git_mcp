@@ -102,7 +102,7 @@ function asyncRoute(handler) {
                 return res.status(err.status || 502).json({ error: 'ai_provider_error', message: err.message });
             }
             if (err?.expected) return res.status(400).json({ error: 'bad_request', message: err.message });
-            console.error('[github-discovery] unexpected REST error:', err);
+            console.error('[gitty] unexpected REST error:', err);
             return res.status(500).json({ error: 'internal_error', message: 'Unexpected internal error. It has been logged server-side.' });
         }
     };

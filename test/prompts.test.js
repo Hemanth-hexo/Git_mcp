@@ -1,5 +1,5 @@
 // Prompts are MCP's native slash-command mechanism (clients that support
-// them surface each registered prompt as e.g. /github-discovery:getinfo).
+// them surface each registered prompt as e.g. /gitty:getinfo).
 // These tests exercise the real McpServer wiring end-to-end (list + get),
 // not just the template functions in isolation, since the argsSchema
 // plumbing and message shape are exactly what a client actually depends on.

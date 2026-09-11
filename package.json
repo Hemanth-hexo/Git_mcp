@@ -1,7 +1,7 @@
 {
-  "name": "github-discovery-mcp",
+  "name": "gitty-mcp",
   "version": "2.0.0",
-  "description": "MCP server that helps Claude find, inspect, and compare open-source GitHub repos for research and learning",
+  "description": "Gitty - an MCP server that helps Claude find, inspect, and compare open-source GitHub repos for research and learning",
   "type": "module",
   "main": "server.js",
   "scripts": {

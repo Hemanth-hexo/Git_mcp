@@ -2,7 +2,7 @@ import * as z from 'zod/v4';
 
 // MCP "prompts" are the protocol's native shortcut mechanism — clients that
 // support them (Claude Desktop, Claude Code, claude.ai) surface each one as
-// a slash command (e.g. /github-discovery:getinfo). Invoking one just fills
+// a slash command (e.g. /gitty:getinfo). Invoking one just fills
 // in a canned natural-language message using the given arguments; the model
 // still picks which tool(s) to call from there. These don't add capability
 // beyond the tools themselves — they exist purely to save typing for the
