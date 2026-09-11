@@ -33,6 +33,8 @@
 
 * { box-sizing: border-box; }
 
+html { -webkit-text-size-adjust: 100%; }
+
 body {
     margin: 0;
     background: var(--bg);
@@ -40,6 +42,7 @@ body {
     font-family: var(--font-sans);
     font-size: 14px;
     line-height: 1.5;
+    overflow-x: hidden;
 }
 
 a { color: var(--accent); text-decoration: none; }
@@ -51,9 +54,11 @@ a:hover { text-decoration: underline; }
 /* Header */
 .site-header {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 16px;
     padding: 12px 20px;
+    padding-top: max(12px, env(safe-area-inset-top));
     border-bottom: 1px solid var(--border);
 }
 .brand {
@@ -66,7 +71,7 @@ a:hover { text-decoration: underline; }
     flex-shrink: 0;
 }
 .brand:hover { text-decoration: none; }
-.global-search { flex: 1; max-width: 480px; }
+.global-search { flex: 1; min-width: 0; max-width: 480px; }
 .global-search input {
     width: 100%;
     padding: 6px 12px;
@@ -84,6 +89,7 @@ a:hover { text-decoration: underline; }
     color: var(--fg);
     width: 32px;
     height: 32px;
+    flex-shrink: 0;
     cursor: pointer;
     font-size: 15px;
 }
@@ -95,12 +101,15 @@ a:hover { text-decoration: underline; }
     gap: 4px;
     padding: 0 20px;
     border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 .nav-link {
     padding: 10px 12px;
     color: var(--fg-muted);
     font-weight: 500;
     border-bottom: 2px solid transparent;
+    white-space: nowrap;
 }
 .nav-link:hover { color: var(--fg); text-decoration: none; }
 .nav-link.active { color: var(--fg); border-bottom-color: var(--accent); }
@@ -189,6 +198,8 @@ a:hover { text-decoration: underline; }
     padding: 20px;
     min-height: 60vh;
 }
+.repo-header h1 { word-break: break-word; }
+.repo-header h1 a { word-break: break-all; }
 
 .filters {
     display: flex;
@@ -204,7 +215,7 @@ a:hover { text-decoration: underline; }
     color: var(--fg);
     font-size: 13px;
 }
-.filters input[type="text"], .filters input[type="search"] { flex: 1; min-width: 200px; }
+.filters input[type="text"], .filters input[type="search"] { flex: 1 1 200px; min-width: 0; }
 .repo-jump {
     align-items: center;
     padding-top: 16px;
@@ -274,9 +285,10 @@ a:hover { text-decoration: underline; }
 .lang-bar-segment { height: 100%; }
 .lang-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--fg-muted); margin-bottom: 18px; }
 
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .tab-btn {
     padding: 8px 14px;
+    min-height: 40px;
     background: none;
     border: none;
     border-bottom: 2px solid transparent;
@@ -284,6 +296,8 @@ a:hover { text-decoration: underline; }
     cursor: pointer;
     font-size: 13px;
     font-weight: 500;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 .tab-btn:hover { color: var(--fg); }
 .tab-btn.active { color: var(--fg); border-bottom-color: var(--accent); }
@@ -293,10 +307,13 @@ a:hover { text-decoration: underline; }
 .file-list li {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    padding: 10px 14px;
+    min-height: 44px;
     border-bottom: 1px solid var(--border);
     cursor: pointer;
+    word-break: break-word;
 }
 .file-list li:last-child { border-bottom: none; }
 .file-list li:hover { background: var(--bg-subtle); }
@@ -327,7 +344,7 @@ a:hover { text-decoration: underline; }
 
 /* Compare */
 .compare-input { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
-.compare-input input { flex: 1; min-width: 220px; }
+.compare-input input { flex: 1 1 160px; min-width: 0; }
 table.compare-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.compare-table th, table.compare-table td {
     text-align: left;
@@ -354,12 +371,60 @@ table.compare-table th { color: var(--fg-muted); font-weight: 600; }
 .site-footer {
     text-align: center;
     padding: 24px;
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
     color: var(--fg-muted);
     font-size: 12px;
     border-top: 1px solid var(--border);
 }
 
+/* ---------- Responsive breakpoints ---------- */
+
+/* Tablet and below: tighten spacing, keep everything single-column */
+@media (max-width: 768px) {
+    #app { padding: 16px; }
+    .site-header { padding: 10px 16px; }
+    .site-nav { padding: 0 16px; }
+    .settings-panel { margin: 12px 16px; }
+    .stat-row { gap: 12px; }
+    .repo-header h1 { font-size: 19px; }
+}
+
+/* Phones: stack forms full-width, enlarge touch targets, avoid iOS input zoom */
 @media (max-width: 640px) {
     .site-header { flex-wrap: wrap; }
-    .global-search { order: 3; max-width: none; width: 100%; }
+    .global-search { order: 3; max-width: none; flex: 1 1 100%; }
+
+    .icon-button { width: 40px; height: 40px; font-size: 16px; }
+    .nav-link { padding: 12px; }
+
+    .filters, .compare-input { flex-direction: column; align-items: stretch; }
+    /* Selectors below intentionally mirror the base rule's [type="..."]
+       attribute selectors so this override matches (rather than loses to)
+       the base rule's specificity - a plain ".filters input" here would be
+       silently outranked and flex-basis:200px would apply as a HEIGHT basis
+       once the container becomes flex-direction:column, ballooning the field. */
+    .filters input[type="text"],
+    .filters input[type="search"],
+    .filters input[type="number"],
+    .filters select,
+    .compare-input input,
+    .filters .btn {
+        width: 100%;
+        flex: none;
+    }
+
+    /* Prevent iOS Safari's auto-zoom-on-focus, which fires on any focused
+       field with a computed font-size under 16px. */
+    input, select, textarea { font-size: 16px; }
+
+    .settings-panel { margin: 12px; padding: 14px; }
+    .stat-row { gap: 10px; font-size: 12px; }
+    .code-view pre { font-size: 12px; }
+    .btn { padding: 8px 14px; min-height: 40px; }
+}
+
+/* Small phones: reclaim header space */
+@media (max-width: 400px) {
+    .brand span { display: none; }
+    .repo-header h1 { font-size: 17px; }
 }
