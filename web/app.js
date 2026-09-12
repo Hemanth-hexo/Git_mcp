@@ -134,6 +134,7 @@ const api = {
         const extraHeaders = apiKey ? { 'X-AI-Key': apiKey, 'X-AI-Provider': provider } : undefined;
         return apiRequest(`/repos/${owner}/${name}/explain`, { method: 'POST', extraHeaders });
     },
+    bundle: (owner, name) => apiRequest(`/repos/${owner}/${name}/bundle`),
 };
 
 // ---------- shared render fragments ----------
@@ -341,6 +342,31 @@ async function runExplain(owner, name) {
     }
 }
 
+// Copies a formatted README+manifest+source-sample bundle to the clipboard -
+// the "clone the repo and paste the relevant files into a chat" workflow,
+// minus the cloning. navigator.clipboard requires a secure context (https,
+// or localhost while developing); it's unavailable in a handful of older or
+// locked-down browsers, so this fails soft with a clear message rather than
+// throwing somewhere the user can't see.
+async function runBundle(owner, name, btn) {
+    const originalLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Bundling…';
+    try {
+        const data = await api.bundle(owner, name);
+        if (!navigator.clipboard) throw new Error('Clipboard access isn\'t available in this browser.');
+        await navigator.clipboard.writeText(data.bundle);
+        btn.textContent = `Copied! (${formatCount(data.bundle.length)} chars)`;
+    } catch (err) {
+        btn.textContent = `Copy failed: ${err.message}`;
+    } finally {
+        setTimeout(() => {
+            btn.textContent = originalLabel;
+            btn.disabled = false;
+        }, 2500);
+    }
+}
+
 async function renderRepoView(owner, name, tab, path) {
     setActiveNav('');
     const fullName = `${owner}/${name}`;
@@ -399,11 +425,14 @@ async function renderRepoView(owner, name, tab, path) {
             ? `<div class="readme-preview markdown">${renderMarkdown(overview.readme.slice(0, 8000))}</div>`
             : `<div class="state-message">No README found.</div>`;
         tabContent.innerHTML = `
-            <div id="explain-area">
+            <div class="explain-actions">
                 <button id="explain-btn" class="btn">✨ Explain this repo with AI</button>
+                <button id="bundle-btn" class="btn">📋 Copy AI context</button>
             </div>
+            <div id="explain-area"></div>
             ${readmeHtml}`;
         document.getElementById('explain-btn').addEventListener('click', () => runExplain(owner, name));
+        document.getElementById('bundle-btn').addEventListener('click', (e) => runBundle(owner, name, e.currentTarget));
     } else if (activeTab === 'files') {
         await loadFilesTab(tabContent, owner, name, path || '');
     } else if (activeTab === 'commits') {

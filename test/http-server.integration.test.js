@@ -57,7 +57,7 @@ test('/mcp works with NO Authorization header at all (public, no gate)', async (
     });
     assert.equal(res.status, 200);
     const text = await res.text();
-    for (const toolName of ['search_github_repos', 'get_repo_overview', 'get_file_content', 'compare_repos']) {
+    for (const toolName of ['search_github_repos', 'get_repo_overview', 'get_file_content', 'compare_repos', 'get_context_bundle']) {
         assert.ok(text.includes(toolName), `expected tools/list to include ${toolName}`);
     }
 });

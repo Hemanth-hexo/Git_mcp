@@ -28,6 +28,10 @@ An MCP server that helps Claude find relevant open-source GitHub repositories fo
 
 - `compare_repos(repos)` — 2-4 repos side by side as a table (stars, forks, issues, license, language, contributors, age, activity)
 
+**Context bundling** — hand a repo's real content to a fresh conversation without cloning it:
+
+- `get_context_bundle(repo)` — README + dependency manifest + a handful of representative source files, formatted as one text blob ready to paste into any AI chat
+
 All the `repo` parameters above accept either `"owner/name"` or a full GitHub URL — you can paste the `full_name`/URL straight out of a search result.
 
 **Shortcuts** — MCP clients that support "prompts" (Claude Desktop, Claude Code, claude.ai) surface these as slash commands, e.g. `/gitty:getinfo`:
@@ -116,6 +120,7 @@ Everything above is for MCP clients (Claude, etc.). The same server also exposes
 | `GET /api/repos/:owner/:name/commits` | `branch`, `limit` | Recent commits |
 | `GET /api/repos/:owner/:name/branches` | `limit` | List branches |
 | `POST /api/repos/:owner/:name/explain` | headers: `X-AI-Key`, `X-AI-Provider` (both optional) | AI-generated explanation of the repo — see [AI explanations](#ai-explanations) |
+| `GET /api/repos/:owner/:name/bundle` | — | README + manifest + sampled source, as one text blob for pasting into an AI chat. No AI call, no trial quota. |
 | `POST /api/compare` | body: `{"repos": ["owner/name", ...]}` (2-4) | Side-by-side comparison |
 
 All responses are JSON. Send `Authorization: Bearer <your GitHub token>` on any request to use your own rate limit instead of the shared pool — identical to how the MCP connector's bring-your-own-token works. Errors come back as `{"error": "<code>", "message": "..."}` with a matching HTTP status (`400` bad input, `404` not found, `429` rate limited with a `Retry-After` header, `502`/`500` for upstream/unexpected failures) — internal details are never included, same policy as the MCP error path (see [Security](#security)).
@@ -236,9 +241,11 @@ This server underwent a security review, then a deliberate follow-up change: it 
 - [lib/createServer.js](lib/createServer.js) — the shared `McpServer` factory both entry points use
 - [core/discovery.js](core/discovery.js), [core/inspect.js](core/inspect.js), [core/compare.js](core/compare.js) — the actual GitHub logic (search ranking, repo inspection, comparison), as plain functions returning plain data. Both the MCP tools and the REST API call these directly — one implementation, two interfaces.
 - [core/explain.js](core/explain.js) — builds the "explain this repo" prompt from repo data and calls whichever AI provider applies
+- [core/sourceSampler.js](core/sourceSampler.js) — picks a manifest file plus a handful of representative source files from a repo (breadth-first, preferring `src`/`lib`/`packages`/etc); shared by `core/explain.js` and `core/bundle.js`
+- [core/bundle.js](core/bundle.js) — builds the "context bundle" (README + manifest + sampled source, formatted as one text blob) for `get_context_bundle` / `/api/.../bundle`
 - [routes/api.js](routes/api.js) — the REST API (see [above](#rest-api-for-a-web-frontend-or-anything-that-isnt-an-mcp-client)); thin JSON/HTTP-status wrapping over `core/`
 - [web/](web) — the static frontend (search, repo detail, compare); see [Web frontend](#web-frontend)
-- [tools/discovery.js](tools/discovery.js), [tools/inspect.js](tools/inspect.js), [tools/compare.js](tools/compare.js) — the MCP tool registrations; thin text-formatting wrapping over the same `core/` functions
+- [tools/discovery.js](tools/discovery.js), [tools/inspect.js](tools/inspect.js), [tools/compare.js](tools/compare.js), [tools/bundle.js](tools/bundle.js) — the MCP tool registrations; thin text-formatting wrapping over the same `core/` functions
 - [tools/prompts.js](tools/prompts.js) — slash-command shortcuts: `getinfo`, `getcodeinfo`, `findrepos`, `comparerepos`
 - [lib/github.js](lib/github.js) — shared GitHub API client (`githubFetch`, `createGitHubClient`), per-caller token priority, response caching, rate-limit/error handling, SSRF allowlist
 - [lib/format.js](lib/format.js) — shared formatting helpers (relative dates, repo-ref parsing, truncation, untrusted-content wrapping)
