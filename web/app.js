@@ -134,6 +134,7 @@ const api = {
         const extraHeaders = apiKey ? { 'X-AI-Key': apiKey, 'X-AI-Provider': provider } : undefined;
         return apiRequest(`/repos/${owner}/${name}/explain`, { method: 'POST', extraHeaders });
     },
+    licenseCheck: (owner, name) => apiRequest(`/repos/${owner}/${name}/license-check`),
 };
 
 // ---------- shared render fragments ----------
@@ -383,6 +384,7 @@ async function renderRepoView(owner, name, tab, path) {
             <button class="tab-btn" data-tab="files">Files</button>
             <button class="tab-btn" data-tab="commits">Commits</button>
             <button class="tab-btn" data-tab="branches">Branches</button>
+            <button class="tab-btn" data-tab="license">License</button>
         </div>
         <div id="tab-content">${loadingHtml()}</div>`;
 
@@ -428,7 +430,71 @@ async function renderRepoView(owner, name, tab, path) {
         } catch (err) {
             tabContent.innerHTML = errorHtml(err.message);
         }
+    } else if (activeTab === 'license') {
+        tabContent.innerHTML = loadingHtml('Checking license and dependencies…');
+        try {
+            const data = await api.licenseCheck(owner, name);
+            tabContent.innerHTML = renderLicenseCheck(data);
+        } catch (err) {
+            tabContent.innerHTML = errorHtml(err.message);
+        }
     }
+}
+
+const LICENSE_CATEGORY_META = {
+    permissive: { label: 'Permissive', color: 'var(--success)' },
+    'weak-copyleft': { label: 'Weak copyleft', color: '#b8860b' },
+    copyleft: { label: 'Copyleft', color: 'var(--danger)' },
+    none: { label: 'No license', color: 'var(--danger)' },
+    unknown: { label: 'Unrecognized', color: 'var(--fg-muted)' },
+};
+
+function renderLicenseCheck(data) {
+    const catMeta = LICENSE_CATEGORY_META[data.license.category] || LICENSE_CATEGORY_META.unknown;
+    const licenseSection = `
+        <div class="license-card">
+            <div class="license-card-header">
+                <span class="license-pill" style="background:color-mix(in srgb, ${catMeta.color} 18%, transparent); color:${catMeta.color}">${escapeHtml(data.license.id || 'No license')}</span>
+                <strong>${catMeta.label}</strong>
+            </div>
+            <p class="muted">${escapeHtml(data.license.note)}</p>
+            <p class="small muted">Not legal advice — a starting point, not a substitute for reading the actual license.</p>
+        </div>`;
+
+    let depsSection;
+    if (!data.manifest) {
+        depsSection = `<div class="state-message">No recognizable dependency manifest found at the repo root.</div>`;
+    } else if (!data.dependencies.supported) {
+        depsSection = `<div class="state-message">Found <code>${escapeHtml(data.manifest)}</code>, but this tool doesn't parse that manifest format yet.</div>`;
+    } else {
+        const vulnHtml = data.vulnerablePackages.length
+            ? `<div class="vuln-list">
+                <p><strong>⚠ ${data.vulnerablePackages.length} package(s) with a known-vulnerability history</strong> <span class="muted small">(via osv.dev, checked by name across all versions — not necessarily your exact pinned version)</span></p>
+                <ul>${data.vulnerablePackages.map((p) => `
+                    <li><strong>${escapeHtml(p.name)}</strong> <span class="muted small">${escapeHtml(p.versionRange)}</span> — ${p.vulnerabilityIds.map((id) => `<a href="https://osv.dev/vulnerability/${encodeURIComponent(id)}" target="_blank" rel="noopener">${escapeHtml(id)}</a>`).join(', ')}</li>
+                `).join('')}</ul>
+            </div>`
+            : `<p class="muted small">No known vulnerabilities found among the checked dependencies (best-effort check via osv.dev, not a guarantee).</p>`;
+        depsSection = `
+            <p>${data.dependencies.total} declared in <code>${escapeHtml(data.manifest)}</code> (${data.dependencies.direct} direct, ${data.dependencies.total - data.dependencies.direct} dev/indirect).</p>
+            ${vulnHtml}`;
+    }
+
+    const health = data.health;
+    const healthItems = [
+        `<span>Archived: <strong>${health.archived ? 'yes' : 'no'}</strong></span>`,
+        health.possiblyAbandoned ? `<span style="color:var(--danger)">Not archived, but no push in ${health.daysSinceLastPush} days</span>` : '',
+        `<span>Open issues: <strong>${formatCount(health.openIssues)}</strong></span>`,
+        health.contributorCount != null ? `<span>Contributors: <strong>~${formatCount(health.contributorCount)}</strong></span>` : '',
+    ].filter(Boolean).join('');
+
+    return `
+        <h4>License</h4>
+        ${licenseSection}
+        <h4>Dependencies</h4>
+        ${depsSection}
+        <h4>Maintenance health</h4>
+        <div class="stat-row">${healthItems}</div>`;
 }
 
 async function loadFilesTab(container, owner, name, path) {

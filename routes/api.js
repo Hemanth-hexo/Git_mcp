@@ -9,6 +9,7 @@ import { searchRepos, searchByTopic, trendingRepos } from '../core/discovery.js'
 import { getRepoOverview, getRepoStructure, getFileContent, getRecentCommits, listBranches } from '../core/inspect.js';
 import { compareRepos } from '../core/compare.js';
 import { explainRepo } from '../core/explain.js';
+import { getDependencyRadar } from '../core/depRadar.js';
 import { AiProviderError, SUPPORTED_PROVIDERS } from '../lib/aiProvider.js';
 import { createTrialQuota } from '../lib/aiTrialQuota.js';
 
@@ -155,6 +156,15 @@ router.get('/repos/:owner/:name', asyncRoute(async (req, res) => {
         latestRelease: release ? { tag: release.tag_name, publishedAt: release.published_at } : null,
         readme: readme ?? null,
     });
+}));
+
+// "Can I use this?" - license compatibility note, a best-effort dependency
+// vulnerability scan (osv.dev), and maintenance-health signals. Fully
+// deterministic (no AI, no API key needed) - see core/depRadar.js.
+router.get('/repos/:owner/:name/license-check', asyncRoute(async (req, res) => {
+    const repo = `${req.params.owner}/${req.params.name}`;
+    const result = await getDependencyRadar({ repo, githubToken: callerToken(req) });
+    res.json(result);
 }));
 
 // AI-generated explanation of a repo (README + stats), on top of everything
