@@ -28,6 +28,10 @@ An MCP server that helps Claude find relevant open-source GitHub repositories fo
 
 - `compare_repos(repos)` — 2-4 repos side by side as a table (stars, forks, issues, license, language, contributors, age, activity)
 
+**"Can I use this?"** — license and dependency due diligence, fully deterministic (no AI):
+
+- `check_license_and_dependencies(repo)` — license compatibility note, declared dependencies (parsed from `package.json`, `composer.json`, `requirements.txt`, or `go.mod`), a best-effort known-vulnerability check via [osv.dev](https://osv.dev), and maintenance-health signals (archived status, staleness, open issues)
+
 All the `repo` parameters above accept either `"owner/name"` or a full GitHub URL — you can paste the `full_name`/URL straight out of a search result.
 
 **Shortcuts** — MCP clients that support "prompts" (Claude Desktop, Claude Code, claude.ai) surface these as slash commands, e.g. `/gitty:getinfo`:
@@ -115,6 +119,7 @@ Everything above is for MCP clients (Claude, etc.). The same server also exposes
 | `GET /api/repos/:owner/:name/file` | `path` (required) | Read one file's contents |
 | `GET /api/repos/:owner/:name/commits` | `branch`, `limit` | Recent commits |
 | `GET /api/repos/:owner/:name/branches` | `limit` | List branches |
+| `GET /api/repos/:owner/:name/license-check` | — | License note + dependency/vulnerability/health check — see [License & dependency radar](#license--dependency-radar) |
 | `POST /api/repos/:owner/:name/explain` | headers: `X-AI-Key`, `X-AI-Provider` (both optional) | AI-generated explanation of the repo — see [AI explanations](#ai-explanations) |
 | `POST /api/compare` | body: `{"repos": ["owner/name", ...]}` (2-4) | Side-by-side comparison |
 
@@ -146,6 +151,15 @@ npx serve .
 It defaults to calling the live Render API. To point it at a local backend instead (e.g. while developing the API), open it with `?api=` before the `#`, e.g. `http://localhost:3000/?api=http://localhost:3000/api#/`.
 
 **Security note on rendering repo content:** README files and AI explanations come from arbitrary public repos (or an AI model summarizing them) and are rendered as Markdown via [marked](https://github.com/markedjs/marked) — which does *not* sanitize embedded raw HTML on its own. Everything rendered this way is passed through [DOMPurify](https://github.com/cure53/DOMPurify) first (see `renderMarkdown()` in [web/app.js](web/app.js)); a malicious repo's README can't inject a working `<script>` tag through this page.
+
+## License & dependency radar
+
+The repo detail page's **License** tab (and `check_license_and_dependencies` / `GET /api/.../license-check`) is a fast "can I use this?" check — fully deterministic, no AI call, no API key needed:
+
+- **License compatibility** — classifies the repo's SPDX license into permissive / weak-copyleft / copyleft / none / unrecognized, with a plain-English note on what that actually means in practice (see [lib/licenseInfo.js](lib/licenseInfo.js)). Not legal advice — a starting point, not a substitute for reading the license text.
+- **Dependencies** — parses the declared dependencies straight out of `package.json`, `composer.json`, `requirements.txt`, or `go.mod` (see [lib/dependencyParser.js](lib/dependencyParser.js)). Other manifest formats (`Cargo.toml`, `pyproject.toml`, `Gemfile`, `pom.xml`, `build.gradle`, `Pipfile`) are recognized but reported as "found, not parsed yet" rather than guessed at.
+- **Known vulnerabilities** — checks up to 25 of the parsed dependencies (direct dependencies prioritized) against [osv.dev](https://osv.dev)'s free, unauthenticated vulnerability database, by package name only (see [lib/osv.js](lib/osv.js)). Manifests without a lockfile only declare a version *range*, so this reports "this package has a known-vulnerability history", not "your exact pinned version is affected" — real signal, just not version-precise.
+- **Maintenance health** — archived status, days since the last push (flagging a repo as possibly abandoned even if it was never formally archived), open issue count, and approximate contributor count, repackaged from data the overview already fetches.
 
 ## AI explanations
 
@@ -236,12 +250,16 @@ This server underwent a security review, then a deliberate follow-up change: it 
 - [lib/createServer.js](lib/createServer.js) — the shared `McpServer` factory both entry points use
 - [core/discovery.js](core/discovery.js), [core/inspect.js](core/inspect.js), [core/compare.js](core/compare.js) — the actual GitHub logic (search ranking, repo inspection, comparison), as plain functions returning plain data. Both the MCP tools and the REST API call these directly — one implementation, two interfaces.
 - [core/explain.js](core/explain.js) — builds the "explain this repo" prompt from repo data and calls whichever AI provider applies
+- [core/depRadar.js](core/depRadar.js) — orchestrates the license/dependency/vulnerability/health check behind `check_license_and_dependencies` / `/api/.../license-check`
 - [routes/api.js](routes/api.js) — the REST API (see [above](#rest-api-for-a-web-frontend-or-anything-that-isnt-an-mcp-client)); thin JSON/HTTP-status wrapping over `core/`
 - [web/](web) — the static frontend (search, repo detail, compare); see [Web frontend](#web-frontend)
-- [tools/discovery.js](tools/discovery.js), [tools/inspect.js](tools/inspect.js), [tools/compare.js](tools/compare.js) — the MCP tool registrations; thin text-formatting wrapping over the same `core/` functions
+- [tools/discovery.js](tools/discovery.js), [tools/inspect.js](tools/inspect.js), [tools/compare.js](tools/compare.js), [tools/depRadar.js](tools/depRadar.js) — the MCP tool registrations; thin text-formatting wrapping over the same `core/` functions
 - [tools/prompts.js](tools/prompts.js) — slash-command shortcuts: `getinfo`, `getcodeinfo`, `findrepos`, `comparerepos`
 - [lib/github.js](lib/github.js) — shared GitHub API client (`githubFetch`, `createGitHubClient`), per-caller token priority, response caching, rate-limit/error handling, SSRF allowlist
 - [lib/format.js](lib/format.js) — shared formatting helpers (relative dates, repo-ref parsing, truncation, untrusted-content wrapping)
+- [lib/licenseInfo.js](lib/licenseInfo.js) — classifies an SPDX license ID into permissive/weak-copyleft/copyleft/none/unrecognized with a plain-English note
+- [lib/dependencyParser.js](lib/dependencyParser.js) — parses declared dependencies out of `package.json`, `composer.json`, `requirements.txt`, or `go.mod`
+- [lib/osv.js](lib/osv.js) — thin client for osv.dev's public vulnerability database, used by the license/dependency radar
 - [lib/auth.js](lib/auth.js) — extracts an optional caller-supplied GitHub token from the Authorization header; never blocks a request
 - [lib/rateLimit.js](lib/rateLimit.js) — per-IP request rate limiting for the HTTP transport (protects this server, independent of GitHub's own limits)
 - [lib/requestLog.js](lib/requestLog.js) — minimal per-request logging (method, tool name, caller IP) with no arguments/tokens ever logged

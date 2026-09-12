@@ -119,6 +119,91 @@ describe('GET /api/repos/:owner/:name', () => {
     });
 });
 
+describe('GET /api/repos/:owner/:name/license-check', () => {
+    test('reports license classification, parsed dependencies, and any known vulnerabilities', async () => {
+        const packageJson = JSON.stringify({ dependencies: { 'left-pad': '^1.0.0' }, devDependencies: { jest: '^29.0.0' } });
+        installFetchMock(async (url, init) => {
+            const u = String(url);
+            if (u.includes('/languages')) return jsonResponse({});
+            if (u.includes('/releases/latest')) return new Response('', { status: 404 });
+            if (u.includes('/readme')) return new Response('', { status: 404 });
+            if (u.includes('/contributors')) return new Response('[]', { status: 200 });
+            if (u === 'https://api.osv.dev/v1/querybatch') {
+                const queries = JSON.parse(init.body).queries;
+                return jsonResponse({ results: queries.map((q) => ({ vulns: q.package.name === 'left-pad' ? [{ id: 'GHSA-test-1234' }] : [] })) });
+            }
+            if (u.endsWith('/contents/')) return jsonResponse([{ name: 'package.json', type: 'file', size: packageJson.length }]);
+            if (u.endsWith('/contents/package.json')) return jsonResponse({ content: Buffer.from(packageJson).toString('base64'), encoding: 'base64', size: packageJson.length });
+            return jsonResponse(sampleRepo);
+        });
+
+        const res = await fetch(`${baseUrl}/repos/facebook/react/license-check`);
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.equal(body.license.id, 'MIT');
+        assert.equal(body.license.category, 'permissive');
+        assert.equal(body.manifest, 'package.json');
+        assert.equal(body.dependencies.ecosystem, 'npm');
+        assert.equal(body.dependencies.total, 2);
+        assert.equal(body.dependencies.direct, 1);
+        assert.equal(body.vulnerablePackages.length, 1);
+        assert.equal(body.vulnerablePackages[0].name, 'left-pad');
+        assert.equal(body.health.archived, false);
+    });
+
+    test('still returns a license verdict when no manifest is found at all', async () => {
+        installFetchMock(async (url) => {
+            const u = String(url);
+            if (u.includes('/languages')) return jsonResponse({});
+            if (u.includes('/releases/latest')) return new Response('', { status: 404 });
+            if (u.includes('/readme')) return new Response('', { status: 404 });
+            if (u.includes('/contributors')) return new Response('[]', { status: 200 });
+            if (u.endsWith('/contents/')) return jsonResponse([]); // empty repo
+            return jsonResponse(sampleRepo);
+        });
+        const res = await fetch(`${baseUrl}/repos/facebook/react/license-check`);
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.equal(body.license.id, 'MIT');
+        assert.equal(body.manifest, null);
+        assert.equal(body.dependencies.supported, false);
+    });
+
+    test('reports a recognized-but-unparsed manifest plainly rather than guessing at its dependencies', async () => {
+        installFetchMock(async (url) => {
+            const u = String(url);
+            if (u.includes('/languages')) return jsonResponse({});
+            if (u.includes('/releases/latest')) return new Response('', { status: 404 });
+            if (u.includes('/readme')) return new Response('', { status: 404 });
+            if (u.includes('/contributors')) return new Response('[]', { status: 200 });
+            if (u.endsWith('/contents/')) return jsonResponse([{ name: 'Cargo.toml', type: 'file', size: 200 }]);
+            return jsonResponse(sampleRepo);
+        });
+        const res = await fetch(`${baseUrl}/repos/facebook/react/license-check`);
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.equal(body.manifest, 'Cargo.toml');
+        assert.equal(body.dependencies.supported, false);
+        assert.equal(body.dependencies.total, 0);
+    });
+
+    test('flags an archived, long-untouched repo as possibly abandoned without needing the archived flag itself', async () => {
+        const staleRepo = { ...sampleRepo, archived: false, pushed_at: '2020-01-01T00:00:00Z' };
+        installFetchMock(async (url) => {
+            const u = String(url);
+            if (u.includes('/languages')) return jsonResponse({});
+            if (u.includes('/releases/latest')) return new Response('', { status: 404 });
+            if (u.includes('/readme')) return new Response('', { status: 404 });
+            if (u.includes('/contributors')) return new Response('[]', { status: 200 });
+            if (u.endsWith('/contents/')) return jsonResponse([]);
+            return jsonResponse(staleRepo);
+        });
+        const res = await fetch(`${baseUrl}/repos/facebook/react/license-check`);
+        const body = await res.json();
+        assert.equal(body.health.possiblyAbandoned, true);
+    });
+});
+
 describe('GET /api/repos/:owner/:name/structure', () => {
     test('returns entries sorted dirs-first', async () => {
         installFetchMock(async () => jsonResponse([
