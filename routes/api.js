@@ -9,6 +9,7 @@ import { searchRepos, searchByTopic, trendingRepos } from '../core/discovery.js'
 import { getRepoOverview, getRepoStructure, getFileContent, getRecentCommits, listBranches } from '../core/inspect.js';
 import { compareRepos } from '../core/compare.js';
 import { explainRepo } from '../core/explain.js';
+import { bundleRepoContext } from '../core/bundle.js';
 import { AiProviderError, SUPPORTED_PROVIDERS } from '../lib/aiProvider.js';
 import { createTrialQuota } from '../lib/aiTrialQuota.js';
 
@@ -197,6 +198,16 @@ router.post('/repos/:owner/:name/explain', asyncRoute(async (req, res) => {
     }
 
     const result = await explainRepo({ repo, githubToken: callerToken(req), ai });
+    res.json(result);
+}));
+
+// A "copy the relevant parts of this repo into any AI chat" bundle - README,
+// manifest, and a few representative source files as one text blob. Unlike
+// /explain, this never calls an AI provider itself; it's just formatted
+// GitHub data, so it needs no trial quota or API key.
+router.get('/repos/:owner/:name/bundle', asyncRoute(async (req, res) => {
+    const repo = `${req.params.owner}/${req.params.name}`;
+    const result = await bundleRepoContext({ repo, githubToken: callerToken(req) });
     res.json(result);
 }));
 

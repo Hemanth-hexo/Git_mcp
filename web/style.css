@@ -138,6 +138,7 @@ a:hover { text-decoration: underline; }
 }
 
 /* AI explain */
+.explain-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
 .explain-box {
     margin: 4px 0 20px;
     padding: 16px;

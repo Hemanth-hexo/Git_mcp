@@ -297,3 +297,65 @@ describe('POST /api/repos/:owner/:name/explain', () => {
         assert.equal(res.status, 400);
     });
 });
+
+describe('GET /api/repos/:owner/:name/bundle', () => {
+    test('returns a text bundle with the README, manifest, and a sampled source file - no AI call, no trial quota', async () => {
+        const packageJson = JSON.stringify({ name: 'sample', dependencies: { express: '^5.0.0' } });
+        const sourceCode = 'module.exports = function add(a, b) {\n  return a + b;\n};\n'.repeat(10); // pad past the min-size filter
+        const b64 = (s) => Buffer.from(s).toString('base64');
+
+        installFetchMock(async (url) => {
+            const u = String(url);
+            if (u.includes('/languages')) return jsonResponse({ JavaScript: 100 });
+            if (u.includes('/releases/latest')) return new Response('', { status: 404 });
+            if (u.includes('/readme')) return new Response('# Sample readme', { status: 200 });
+            if (u.includes('/contributors')) return new Response('[]', { status: 200 });
+            if (u.endsWith('/contents/')) {
+                return jsonResponse([
+                    { name: 'package.json', type: 'file', size: packageJson.length },
+                    { name: 'src', type: 'dir' },
+                ]);
+            }
+            if (u.endsWith('/contents/src')) {
+                return jsonResponse([{ name: 'index.js', type: 'file', size: sourceCode.length }]);
+            }
+            if (u.endsWith('/contents/package.json')) {
+                return jsonResponse({ content: b64(packageJson), encoding: 'base64', size: packageJson.length });
+            }
+            if (u.endsWith('/contents/src/index.js')) {
+                return jsonResponse({ content: b64(sourceCode), encoding: 'base64', size: sourceCode.length });
+            }
+            return jsonResponse(sampleRepo);
+        });
+
+        const res = await fetch(`${baseUrl}/repos/facebook/react/bundle`);
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.equal(body.repo, 'facebook/react');
+        assert.equal(body.fileCount, 2);
+        assert.match(body.bundle, /# facebook\/react — context bundle/);
+        assert.match(body.bundle, /## README/);
+        assert.match(body.bundle, /Sample readme/);
+        assert.match(body.bundle, /### package\.json/);
+        assert.match(body.bundle, /"express":\s*"\^5\.0\.0"/);
+        assert.match(body.bundle, /### src\/index\.js/);
+        assert.match(body.bundle, /function add/);
+    });
+
+    test('still returns a bundle (README + stats only) when no source files can be sampled', async () => {
+        installFetchMock(async (url) => {
+            const u = String(url);
+            if (u.includes('/languages')) return jsonResponse({ JavaScript: 100 });
+            if (u.includes('/releases/latest')) return new Response('', { status: 404 });
+            if (u.includes('/readme')) return new Response('# Sample readme', { status: 200 });
+            if (u.includes('/contributors')) return new Response('[]', { status: 200 });
+            if (u.includes('/contents')) return jsonResponse([]); // empty repo, nothing to sample
+            return jsonResponse(sampleRepo);
+        });
+        const res = await fetch(`${baseUrl}/repos/facebook/react/bundle`);
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.equal(body.fileCount, 0);
+        assert.match(body.bundle, /Sample readme/);
+    });
+});
